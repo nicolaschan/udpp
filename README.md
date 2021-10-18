@@ -2,7 +2,7 @@
 
 > One more than UDP
 
-An /experimental/ protocol adding the following on top of UDP:
+An _experimental_ protocol adding the following on top of UDP:
 [x] Sessions
 [ ] Congestion detection
 [ ] Guaranteed order
