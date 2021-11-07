@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, stream::Stream, sync::{Arc}};
+use std::{net::SocketAddr, sync::{Arc}};
 
 use async_std::sync::Mutex;
 use uuid::Uuid;
@@ -85,9 +85,9 @@ impl UdppSession {
     }
     pub async fn send(&mut self, data: Vec<u8>) {
         let mut handler_guard = self.handler.lock().await;
-        handler_guard.send_data(self.session_id, data);
+        handler_guard.send_data(self.session_id, data).await;
     }
-    pub async fn recv(&mut self) -> Option<Vec<u8>> {
+    pub async fn try_recv(&mut self) -> Option<Vec<u8>> {
         let mut handler_guard = self.handler.lock().await;
         handler_guard.recv_session(self.session_id)
     }

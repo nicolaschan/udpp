@@ -1,10 +1,10 @@
-use std::{cmp::max, collections::{BTreeMap, HashMap, HashSet, VecDeque}, future::Future, net::SocketAddr, slice::SliceIndex, sync::{Arc, Mutex}, task::{Poll, Waker}, time::{Instant, SystemTime, UNIX_EPOCH}};
+use std::{cmp::max, collections::{BTreeMap, HashMap, HashSet, VecDeque}, future::Future, net::SocketAddr, slice::SliceIndex, sync::{Arc, Mutex, atomic::AtomicBool}, task::{Poll, Waker}, time::{Instant, SystemTime, UNIX_EPOCH}};
 
 
 
 use actix_web::dev::Service;
 
-use async_std::{channel::{Receiver, Sender, unbounded}, prelude::Stream};
+use async_std::{channel::{Receiver, Sender, unbounded}};
 use snow::{HandshakeState, Keypair, TransportState};
 use uuid::Uuid;
 
@@ -97,7 +97,6 @@ pub struct Session {
     pub next_index: u64,
     pub next_group_index: u64,
     pub fragment_size: usize,
-    pub is_ready: Arc<Mutex<bool>>,
 }
 
 impl std::fmt::Debug for Session {
@@ -136,7 +135,6 @@ impl Session {
             next_index: 0,
             next_group_index: 0,
             fragment_size: 1024,
-            is_ready: Arc::new(Mutex::new(false)),
         }
     }
     pub fn is_ready(&self) -> bool {
@@ -226,6 +224,7 @@ impl Session {
 
 pub struct UdppHandler {
     pub sessions: HashMap<Uuid, Session>,
+    pub ready_sessions: Arc<Mutex<HashSet<Uuid>>>,
     pub wakers: Arc<Mutex<HashMap<Uuid, Waker>>>,
     pub new_sessions_sender: Sender<Uuid>,
     pub new_sessions_receiver: Receiver<Uuid>,
@@ -251,6 +250,7 @@ impl UdppHandler {
         UdppHandler {
             sessions: HashMap::new(),
             wakers: Arc::new(Mutex::new(HashMap::new())),
+            ready_sessions: Arc::new(Mutex::new(HashSet::new())),
             new_sessions_sender,
             new_sessions_receiver,
             keypair,
@@ -262,7 +262,21 @@ impl UdppHandler {
         self.new_sessions_receiver.clone()
     }
 
-    fn handshake(&mut self, remote_address: SocketAddr, session_id: Uuid, incoming_message: Vec<u8>) -> Result<Option<UdppPacket>, snow::Error> {
+    async fn new_session_started(&mut self, session_id: Uuid) {
+        self.new_sessions_sender.send(session_id).await.unwrap();
+        {
+            let mut ready_sessions_guard = self.ready_sessions.lock().unwrap();
+            ready_sessions_guard.insert(session_id);
+        }
+        {
+            let wakers_guard = self.wakers.lock().unwrap();
+            if let Some(waker) = wakers_guard.get(&session_id) {
+                waker.wake_by_ref();
+            }
+        }
+    }
+
+    async fn handshake(&mut self, remote_address: SocketAddr, session_id: Uuid, incoming_message: Vec<u8>) -> Result<Option<UdppPacket>, snow::Error> {
         let responder = match self.sessions.remove(&session_id) {
             Some(session) => session.noise_state,
             None => NoiseState::Handshake(snow::Builder::new(NOISE_PARAMS.parse()?)
@@ -272,7 +286,7 @@ impl UdppHandler {
         match responder {
             NoiseState::Handshake(mut handshake_state) => {
                 let mut read_buf = [0u8; 1024];
-                handshake_state.read_message(&incoming_message[..], &mut read_buf);
+                handshake_state.read_message(&incoming_message[..], &mut read_buf).unwrap();
 
                 let mut return_value = None;
                 if handshake_state.is_my_turn() {
@@ -285,7 +299,7 @@ impl UdppHandler {
                     let transport_state = handshake_state.into_transport_mode()?;
                     let session = Session::new(session_id, remote_address, NoiseState::Transport(transport_state));
                     self.sessions.insert(session_id, session);
-                    self.new_sessions_sender.send(session_id);
+                    self.new_session_started(session_id).await;
                 } else {
                     let session = Session::new(session_id, remote_address, NoiseState::Handshake(handshake_state));
                     self.sessions.insert(session_id, session);
@@ -309,14 +323,13 @@ impl UdppHandler {
         let mut response_buf = [0u8; 1024];
         let len = initiator.write_message(&[], &mut response_buf).unwrap();
         let session = Session::new(session_id, remote_address, NoiseState::Handshake(initiator));
-        let is_ready = session.is_ready.clone();
         self.sessions.insert(session_id, session);
         let handshake_packet = UdppPacket::handshake(session_id, response_buf[..len].to_vec());
         self.send_packet(remote_address, handshake_packet).await.unwrap();
         let wakers = self.wakers.clone();
         SessionFuture {
             session_id,
-            is_ready,
+            ready_sessions: self.ready_sessions.clone(),
             wakers,
         }
     }
@@ -326,7 +339,7 @@ impl UdppHandler {
         self.sender.addressed_send(addr, serialized).await
     }
 
-    pub fn send_content(&mut self, session_id: Uuid, content: UdppContent) -> Result<(), snow::Error> {
+    pub async fn send_content(&mut self, session_id: Uuid, content: UdppContent) -> Result<(), snow::Error> {
         if let Some(session) = self.sessions.remove(&session_id) {
             if let NoiseState::Transport(mut transport) = session.noise_state {
                 let serialized = bincode::serialize(&content).unwrap();
@@ -336,7 +349,7 @@ impl UdppHandler {
                     session_id,
                     payload: UdppPayload::Encrypted(data[..len].to_vec()),
                 };
-                self.send_packet(session.remote_address, packet);
+                self.send_packet(session.remote_address, packet).await.unwrap();
                 let session = Session::new(session_id, session.remote_address, NoiseState::Transport(transport));
                 self.sessions.insert(session_id, session);
             }
@@ -365,10 +378,10 @@ impl UdppHandler {
             Ok(UdppPacket { session_id, payload }) => {
                 match payload {
                     UdppPayload::Handshake(payload) => {
-                        match self.handshake(src, session_id, payload) {
+                        match self.handshake(src, session_id, payload).await {
                             Ok(None) => { /* nothing */}
                             Ok(Some(packet)) => {
-                                self.send_packet(src, packet).await;
+                                self.send_packet(src, packet).await.unwrap();
                             },
                             Err(e) => { eprintln!("{:?}", e); },
                         }
@@ -383,13 +396,10 @@ impl UdppHandler {
                                     NoiseState::Handshake(_) => { /* handshake not complete */},
                                     NoiseState::Transport(transport_state) => {
                                         let mut read_buf = [0u8; 65535];
-                                        match transport_state.read_message(&encrypted_payload[..], &mut read_buf) {
-                                            Ok(len) => {
-                                                if let Ok(payload) = bincode::deserialize::<CleartextPayload>(&read_buf[..len]) {
-                                                    session.handle_payload(payload);
-                                                }
-                                            },
-                                            Err(_) => { /* failed to read */},
+                                        if let Ok(len) = transport_state.read_message(&encrypted_payload[..], &mut read_buf) {
+                                            if let Ok(payload) = bincode::deserialize::<CleartextPayload>(&read_buf[..len]) {
+                                                session.handle_payload(payload);
+                                            }
                                         }
                                     },
                                 }
@@ -407,7 +417,7 @@ impl UdppHandler {
 
 pub struct SessionFuture {
     pub session_id: Uuid,
-    pub is_ready: Arc<Mutex<bool>>,
+    pub ready_sessions: Arc<Mutex<HashSet<Uuid>>>,
     pub wakers: Arc<Mutex<HashMap<Uuid, Waker>>>,
 }
 
@@ -416,10 +426,10 @@ impl Future for SessionFuture {
 
     fn poll(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Self::Output> {
         println!("hi");
-        let mut ready_guard = self.is_ready.lock().unwrap();
         let mut waker_guard = self.wakers.lock().unwrap();
+        let sessions_guard = self.ready_sessions.lock().unwrap();
         println!("hi2");
-        if *ready_guard {
+        if sessions_guard.contains(&self.session_id) {
             waker_guard.remove(&self.session_id);
             return Poll::Ready(Ok(self.session_id));
         }
