@@ -1,5 +1,6 @@
-use std::{net::SocketAddr, sync::{Arc, Mutex}};
+use std::{net::SocketAddr, stream::Stream, sync::{Arc}};
 
+use async_std::sync::Mutex;
 use uuid::Uuid;
 
 use crate::transport::{AddressedReceiver, AddressedSender};
@@ -12,15 +13,15 @@ pub struct UdppServer {
 }
 
 impl UdppServer {
-    pub fn new(sender: Box<dyn AddressedSender + Send>, mut receiver: Box<dyn AddressedReceiver + Send>) -> UdppServer {
-        let handler = Arc::new(Mutex::new(UdppHandler::new(sender)));
+    pub fn new(external_sender: Box<dyn AddressedSender + Send>, mut external_receiver: Box<dyn AddressedReceiver + Send>) -> UdppServer {
+        let handler = Arc::new(Mutex::new(UdppHandler::new(external_sender)));
         let handler_clone = handler.clone();
         tokio::spawn(async move {
             loop {
                 println!("foo");
-                if let Ok((src, data)) = receiver.addressed_recv().await {
-                    let mut handler_guard = handler_clone.lock().unwrap();
-                    handler_guard.handle_incoming(src, data);
+                if let Ok((src, data)) = external_receiver.addressed_recv().await {
+                    let mut handler_guard = handler_clone.lock().await;
+                    handler_guard.handle_incoming(src, data).await;
                     println!("foo2");
                 }
             }
@@ -42,16 +43,13 @@ pub struct IncomingUdppSessions {
     handler: Arc<Mutex<UdppHandler>>,
 }
 
-impl Iterator for IncomingUdppSessions {
-    type Item = UdppSession;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let handler_guard = self.handler.lock().unwrap();
-        let receiver = handler_guard.session_id_receiver();
-        receiver.recv().ok().map(|session_id| UdppSession {
-            session_id, 
-            handler: self.handler.clone()
-        })
+impl IncomingUdppSessions {
+    async fn accept(&mut self) -> UdppSession {
+        let handler_guard = self.handler.lock().await;
+        let session_id = handler_guard.new_sessions_receiver.recv().await.unwrap();
+        UdppSession {
+            session_id, handler: self.handler.clone()
+        }
     }
 }
 
@@ -62,23 +60,22 @@ pub struct UdppSession {
 }
 
 impl UdppSession {
-    pub async fn new(sender: Box<dyn AddressedSender + Send>, mut receiver: Box<dyn AddressedReceiver + Send>, addr: SocketAddr) -> UdppSession {
-        let handler = Arc::new(Mutex::new(UdppHandler::new(sender)));
+    pub async fn new(external_sender: Box<dyn AddressedSender + Send>, mut external_receiver: Box<dyn AddressedReceiver + Send>, addr: SocketAddr) -> UdppSession {
+        let handler = Arc::new(Mutex::new(UdppHandler::new(external_sender)));
         let handler_clone = handler.clone();
         tokio::spawn(async move {
             loop {
-                if let Ok((src, data)) = receiver.addressed_recv().await {
-                    println!("bar");
-                    let mut handler_guard = handler_clone.lock().unwrap();
-                    handler_guard.handle_incoming(src, data);
+                println!("bar");
+                if let Ok((src, data)) = external_receiver.addressed_recv().await {
+                    let mut handler_guard = handler_clone.lock().await;
+                    handler_guard.handle_incoming(src, data).await;
                     println!("bar2");
                 }
             }
         });
-        let handler_clone = handler.clone();
         let session_id_future = {
-            let mut handler_guard = handler_clone.lock().unwrap();
-            handler_guard.establish_session(addr, handler.clone()).await
+            let mut handler_guard = handler.lock().await;
+            handler_guard.establish_session(addr).await
         };
         let session_id = session_id_future.await.unwrap();
         UdppSession {
@@ -86,12 +83,12 @@ impl UdppSession {
             handler,
         }
     }
-    pub fn send(&mut self, data: Vec<u8>) {
-        let mut handler_guard = self.handler.lock().unwrap();
+    pub async fn send(&mut self, data: Vec<u8>) {
+        let mut handler_guard = self.handler.lock().await;
         handler_guard.send_data(self.session_id, data);
     }
-    pub fn recv(&mut self) -> Option<Vec<u8>> {
-        let mut handler_guard = self.handler.lock().unwrap();
+    pub async fn recv(&mut self) -> Option<Vec<u8>> {
+        let mut handler_guard = self.handler.lock().await;
         handler_guard.recv_session(self.session_id)
     }
 }

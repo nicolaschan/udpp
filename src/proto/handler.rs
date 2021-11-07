@@ -2,9 +2,9 @@ use std::{cmp::max, collections::{BTreeMap, HashMap, HashSet, VecDeque}, future:
 
 
 
-use crossbeam::channel::{Receiver, Sender};
+use actix_web::dev::Service;
 
-
+use async_std::{channel::{Receiver, Sender, unbounded}, prelude::Stream};
 use snow::{HandshakeState, Keypair, TransportState};
 use uuid::Uuid;
 
@@ -94,10 +94,10 @@ pub struct Session {
     pub incoming_congestion: CongestionMonitor,
     pub outgoing_congestion: CongestionReport,
     pub latency: Option<u128>,
-    pub sink: Arc<Mutex<Box<dyn AddressedSender + Send>>>,
     pub next_index: u64,
     pub next_group_index: u64,
     pub fragment_size: usize,
+    pub is_ready: Arc<Mutex<bool>>,
 }
 
 impl std::fmt::Debug for Session {
@@ -123,7 +123,7 @@ fn unix_time() -> u128 {
 }
 
 impl Session {
-    pub fn new(session_id: Uuid, remote_address: SocketAddr, noise_state: NoiseState, sink: Arc<Mutex<Box<dyn AddressedSender + Send>>>) -> Session {
+    pub fn new(session_id: Uuid, remote_address: SocketAddr, noise_state: NoiseState) -> Session {
         Session { 
             session_id,
             remote_address, 
@@ -133,10 +133,10 @@ impl Session {
             incoming_congestion: CongestionMonitor::new(),
             outgoing_congestion: CongestionReport::new(0, 0, 0),
             latency: None,
-            sink,
             next_index: 0,
             next_group_index: 0,
             fragment_size: 1024,
+            is_ready: Arc::new(Mutex::new(false)),
         }
     }
     pub fn is_ready(&self) -> bool {
@@ -145,7 +145,7 @@ impl Session {
             NoiseState::Transport(_) => true,
         }
     }
-    pub fn send_content(&mut self, content: UdppContent) {
+    pub fn send_content(&mut self, content: UdppContent) -> Option<(SocketAddr, UdppPacket)> {
         let payload = CleartextPayload {
             index: self.next_index,
             content,
@@ -162,13 +162,11 @@ impl Session {
                 payload: UdppPayload::Encrypted(encrypted_payload_vec),
             };
 
-            let serialized = bincode::serialize(&packet).unwrap();
-            if let Ok(sink_guard) = &mut self.sink.lock() {
-                sink_guard.addressed_send(self.remote_address, serialized);
-            }
+            return Some((self.remote_address, packet));
         }
+        None
     }
-    pub fn send_data(&mut self, data: Vec<u8>) {
+    pub fn send_data(&mut self, data: Vec<u8>) -> Vec<(SocketAddr, UdppPacket)> {
         let chunks = data.chunks(self.fragment_size);
         let number_of_fragments = chunks.len() as u64;
         let group_index = self.next_group_index;
@@ -181,9 +179,7 @@ impl Session {
                 payload: chunk.to_vec(),
             }
         });
-        for fragment in fragments {
-            self.send_content(fragment);
-        }
+        fragments.filter_map(|fragment| self.send_content(fragment)).collect()
     }
     pub fn handle_payload(&mut self, payload: CleartextPayload) {
         self.incoming_congestion.accept_payload(payload.index);
@@ -230,11 +226,11 @@ impl Session {
 
 pub struct UdppHandler {
     pub sessions: HashMap<Uuid, Session>,
-    pub wakers: HashMap<Uuid, Waker>,
-    pub new_sessions_receiver: Receiver<Uuid>,
+    pub wakers: Arc<Mutex<HashMap<Uuid, Waker>>>,
     pub new_sessions_sender: Sender<Uuid>,
+    pub new_sessions_receiver: Receiver<Uuid>,
     pub keypair: Keypair,
-    pub sender: Arc<Mutex<Box<dyn AddressedSender + Send>>>,
+    pub sender: Box<dyn AddressedSender + Send>,
 }
 
 impl std::fmt::Debug for UdppHandler {
@@ -251,19 +247,18 @@ impl UdppHandler {
     pub fn new(sender: Box<dyn AddressedSender + Send>) -> UdppHandler {
         let builder = snow::Builder::new(NOISE_PARAMS.parse().unwrap());
         let keypair = builder.generate_keypair().unwrap();
-        let (new_sessions_sender, new_sessions_receiver) = crossbeam::channel::unbounded();
-
+        let (new_sessions_sender, new_sessions_receiver) = unbounded();
         UdppHandler {
             sessions: HashMap::new(),
-            wakers: HashMap::new(),
-            new_sessions_receiver,
+            wakers: Arc::new(Mutex::new(HashMap::new())),
             new_sessions_sender,
+            new_sessions_receiver,
             keypair,
-            sender: Arc::new(Mutex::new(sender)),
+            sender, 
         }
     }
 
-    pub fn session_id_receiver(&self) -> Receiver<Uuid> {
+    pub fn new_sessions_stream(&mut self) -> Receiver<Uuid> {
         self.new_sessions_receiver.clone()
     }
 
@@ -288,24 +283,24 @@ impl UdppHandler {
                 }
                 if handshake_state.is_handshake_finished() {
                     let transport_state = handshake_state.into_transport_mode()?;
-                    let session = Session::new(session_id, remote_address, NoiseState::Transport(transport_state), self.sender.clone());
+                    let session = Session::new(session_id, remote_address, NoiseState::Transport(transport_state));
                     self.sessions.insert(session_id, session);
                     self.new_sessions_sender.send(session_id);
                 } else {
-                    let session = Session::new(session_id, remote_address, NoiseState::Handshake(handshake_state), self.sender.clone());
+                    let session = Session::new(session_id, remote_address, NoiseState::Handshake(handshake_state));
                     self.sessions.insert(session_id, session);
                 }
                 Ok(return_value)
             },
             NoiseState::Transport(transport) => {
-                let session = Session::new(session_id, remote_address, NoiseState::Transport(transport), self.sender.clone());
+                let session = Session::new(session_id, remote_address, NoiseState::Transport(transport));
                 self.sessions.insert(session_id, session);
                 Ok(None)
             },
         }
     }
 
-    pub async fn establish_session(&mut self, remote_address: SocketAddr, handler: Arc<Mutex<UdppHandler>>) -> SessionFuture {
+    pub async fn establish_session(&mut self, remote_address: SocketAddr) -> SessionFuture {
         let session_id = Uuid::new_v4();
         let mut initiator = snow::Builder::new(NOISE_PARAMS.parse().unwrap())
             .local_private_key(&self.keypair.private)
@@ -313,20 +308,22 @@ impl UdppHandler {
             .unwrap();
         let mut response_buf = [0u8; 1024];
         let len = initiator.write_message(&[], &mut response_buf).unwrap();
-        let session = Session::new(session_id, remote_address, NoiseState::Handshake(initiator), self.sender.clone());
+        let session = Session::new(session_id, remote_address, NoiseState::Handshake(initiator));
+        let is_ready = session.is_ready.clone();
         self.sessions.insert(session_id, session);
         let handshake_packet = UdppPacket::handshake(session_id, response_buf[..len].to_vec());
         self.send_packet(remote_address, handshake_packet).await.unwrap();
+        let wakers = self.wakers.clone();
         SessionFuture {
             session_id,
-            handler
+            is_ready,
+            wakers,
         }
     }
 
     pub async fn send_packet(&mut self, addr: SocketAddr, packet: UdppPacket) -> Result<usize, std::io::Error> {
         let serialized = bincode::serialize(&packet).unwrap();
-        let sink_guard = &mut self.sender.lock().unwrap();
-        sink_guard.addressed_send(addr, serialized).await
+        self.sender.addressed_send(addr, serialized).await
     }
 
     pub fn send_content(&mut self, session_id: Uuid, content: UdppContent) -> Result<(), snow::Error> {
@@ -340,16 +337,18 @@ impl UdppHandler {
                     payload: UdppPayload::Encrypted(data[..len].to_vec()),
                 };
                 self.send_packet(session.remote_address, packet);
-                let session = Session::new(session_id, session.remote_address, NoiseState::Transport(transport), self.sender.clone());
+                let session = Session::new(session_id, session.remote_address, NoiseState::Transport(transport));
                 self.sessions.insert(session_id, session);
             }
         }
         Ok(())
     }
 
-    pub fn send_data(&mut self, session_id: Uuid, data: Vec<u8>) {
+    pub async fn send_data(&mut self, session_id: Uuid, data: Vec<u8>) {
         if let Some(session) = self.sessions.get_mut(&session_id) {
-            session.send_data(data);
+            for (addr, packet) in session.send_data(data) {
+                self.send_packet(addr, packet).await.unwrap();
+            }
         }
     }
     pub fn recv_session(&mut self, session_id: Uuid) -> Option<Vec<u8>> {
@@ -361,7 +360,7 @@ impl UdppHandler {
         bincode::deserialize(&data[..])
     }
 
-    pub fn handle_incoming(&mut self, src: SocketAddr, data: Vec<u8>) -> Option<Uuid> {
+    pub async fn handle_incoming(&mut self, src: SocketAddr, data: Vec<u8>) -> Option<Uuid> {
         match UdppHandler::read_packet(data) {
             Ok(UdppPacket { session_id, payload }) => {
                 match payload {
@@ -369,12 +368,12 @@ impl UdppHandler {
                         match self.handshake(src, session_id, payload) {
                             Ok(None) => { /* nothing */}
                             Ok(Some(packet)) => {
-                                self.send_packet(src, packet);
-                                if let Some(waker) = self.wakers.get(&session_id) {
-                                    waker.wake_by_ref();
-                                }
+                                self.send_packet(src, packet).await;
                             },
                             Err(e) => { eprintln!("{:?}", e); },
+                        }
+                        if let Some(waker) = self.wakers.lock().unwrap().get(&session_id) {
+                            waker.wake_by_ref();
                         }
                     },
                     UdppPayload::Encrypted(encrypted_payload) => {
@@ -388,10 +387,6 @@ impl UdppHandler {
                                             Ok(len) => {
                                                 if let Ok(payload) = bincode::deserialize::<CleartextPayload>(&read_buf[..len]) {
                                                     session.handle_payload(payload);
-
-                                                    if let Some(waker) = self.wakers.get(&session_id) {
-                                                        waker.wake_by_ref();
-                                                    }
                                                 }
                                             },
                                             Err(_) => { /* failed to read */},
@@ -408,15 +403,12 @@ impl UdppHandler {
         };
         None
     }
-
-    pub fn register_waker(&mut self, session_id: Uuid, waker: Waker) {
-        self.wakers.insert(session_id, waker);
-    }
 }
 
 pub struct SessionFuture {
     pub session_id: Uuid,
-    pub handler: Arc<Mutex<UdppHandler>>,
+    pub is_ready: Arc<Mutex<bool>>,
+    pub wakers: Arc<Mutex<HashMap<Uuid, Waker>>>,
 }
 
 impl Future for SessionFuture {
@@ -424,14 +416,14 @@ impl Future for SessionFuture {
 
     fn poll(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Self::Output> {
         println!("hi");
-        let mut handler_guard = self.handler.lock().unwrap();
+        let mut ready_guard = self.is_ready.lock().unwrap();
+        let mut waker_guard = self.wakers.lock().unwrap();
         println!("hi2");
-        if let Some(session) = handler_guard.sessions.get(&self.session_id) {
-            if session.is_ready() {
-                return Poll::Ready(Ok(self.session_id));
-            }
+        if *ready_guard {
+            waker_guard.remove(&self.session_id);
+            return Poll::Ready(Ok(self.session_id));
         }
-        handler_guard.register_waker(self.session_id, cx.waker().clone());
+        waker_guard.insert(self.session_id, cx.waker().clone());
         Poll::Pending
     }
 }
