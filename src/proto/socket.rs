@@ -16,10 +16,13 @@ impl UdppServer {
         let handler = Arc::new(Mutex::new(UdppHandler::new(sender)));
         let handler_clone = handler.clone();
         tokio::spawn(async move {
-            while let Ok((src, data)) = receiver.addressed_recv() {
-                let mut handler_guard = handler_clone.lock().unwrap();
-                handler_guard.handle_incoming(src, data);
-                println!("foo");
+            loop {
+                if let Ok((src, data)) = receiver.addressed_recv() {
+                    println!("foo");
+                    let mut handler_guard = handler_clone.lock().unwrap();
+                    handler_guard.handle_incoming(src, data);
+                    println!("foo2");
+                }
             }
         });
         UdppServer {
@@ -63,9 +66,13 @@ impl UdppSession {
         let handler = Arc::new(Mutex::new(UdppHandler::new(sender)));
         let handler_clone = handler.clone();
         tokio::spawn(async move {
-            while let Ok((src, data)) = receiver.addressed_recv() {
-                let mut handler_guard = handler_clone.lock().unwrap();
-                handler_guard.handle_incoming(src, data);
+            loop {
+                if let Ok((src, data)) = receiver.addressed_recv() {
+                    println!("foo");
+                    let mut handler_guard = handler_clone.lock().unwrap();
+                    handler_guard.handle_incoming(src, data);
+                    println!("foo2");
+                }
             }
         });
         let handler_clone = handler.clone();

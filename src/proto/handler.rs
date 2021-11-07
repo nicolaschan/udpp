@@ -1,19 +1,19 @@
-use std::{cmp::max, collections::{BTreeMap, HashMap, HashSet, VecDeque}, future::Future, net::SocketAddr, slice::SliceIndex, sync::{Arc, Mutex}, task::Poll, time::{Instant, SystemTime, UNIX_EPOCH}};
+use std::{cmp::max, collections::{BTreeMap, HashMap, HashSet, VecDeque}, future::Future, net::SocketAddr, slice::SliceIndex, sync::{Arc, Mutex}, task::{Poll, Waker}, time::{Instant, SystemTime, UNIX_EPOCH}};
 
-use bincode::Options;
-use chacha20poly1305::{Key, aead::generic_array::typenum::private::IsEqualPrivate};
+
+
 use crossbeam::channel::{Receiver, Sender};
-use ed25519::signature::{Signature, Signer};
-use rand::{CryptoRng, Rng, rngs::OsRng};
-use snow::{HandshakeState, Keypair, TransportState, params::NoiseParams};
+
+
+use snow::{HandshakeState, Keypair, TransportState};
 use uuid::Uuid;
-use x25519_dalek::{EphemeralSecret, PublicKey};
 
-use crate::{proto::structs::UdppContent, transport::{AddressedReceiver, AddressedSender}};
 
-use super::structs::{CleartextPayload, CongestionReport, SessionId, UdppCongestionMessage, UdppPacket, UdppPayload};
+use crate::{proto::structs::UdppContent, transport::{AddressedSender}};
 
-static NOISE_PARAMS: &'static str = "Noise_IX_25519_ChaChaPoly_BLAKE2s";
+use super::structs::{CleartextPayload, CongestionReport, UdppCongestionMessage, UdppPacket, UdppPayload};
+
+static NOISE_PARAMS: &str = "Noise_IX_25519_ChaChaPoly_BLAKE2s";
 
 #[derive(Debug)]
 pub enum NoiseState {
@@ -200,10 +200,10 @@ impl Session {
                 }
             },
             UdppContent::DataFragment { group_index, fragment_index, number_of_fragments, payload } => {
-                if !self.fragments.contains_key(&group_index) {
+                self.fragments.entry(group_index).or_insert_with(|| {
                     let fragment_collection = FragmentCollection::new(number_of_fragments);
-                    self.fragments.insert(group_index, fragment_collection);
-                }
+                    fragment_collection
+                });
                 if let Some(collection) = self.fragments.get_mut(&group_index) {
                     collection.insert_fragment(fragment_index, payload);
                     if collection.is_ready() {
@@ -230,6 +230,7 @@ impl Session {
 
 pub struct UdppHandler {
     pub sessions: HashMap<Uuid, Session>,
+    pub wakers: HashMap<Uuid, Waker>,
     pub new_sessions_receiver: Receiver<Uuid>,
     pub new_sessions_sender: Sender<Uuid>,
     pub keypair: Keypair,
@@ -254,6 +255,7 @@ impl UdppHandler {
 
         UdppHandler {
             sessions: HashMap::new(),
+            wakers: HashMap::new(),
             new_sessions_receiver,
             new_sessions_sender,
             keypair,
@@ -362,6 +364,9 @@ impl UdppHandler {
     pub fn handle_incoming(&mut self, src: SocketAddr, data: Vec<u8>) -> Option<Uuid> {
         match UdppHandler::read_packet(data) {
             Ok(UdppPacket { session_id, payload }) => {
+                if let Some(waker) = self.wakers.get(&session_id) {
+                    waker.wake_by_ref();
+                }
                 match payload {
                     UdppPayload::Handshake(payload) => {
                         match self.handshake(src, session_id, payload) {
@@ -397,6 +402,10 @@ impl UdppHandler {
         };
         None
     }
+
+    pub fn register_waker(&mut self, session_id: Uuid, waker: Waker) {
+        self.wakers.insert(session_id, waker);
+    }
 }
 
 pub struct SessionFuture {
@@ -408,13 +417,15 @@ impl Future for SessionFuture {
     type Output = Result<Uuid, std::io::Error>;
 
     fn poll(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Self::Output> {
-        let handler_guard = self.handler.lock().unwrap();
+        println!("hi");
+        let mut handler_guard = self.handler.lock().unwrap();
+        println!("hi2");
         if let Some(session) = handler_guard.sessions.get(&self.session_id) {
             if session.is_ready() {
                 return Poll::Ready(Ok(self.session_id));
             }
         }
-        println!("hi");
+        handler_guard.register_waker(self.session_id, cx.waker().clone());
         Poll::Pending
     }
 }

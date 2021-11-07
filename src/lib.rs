@@ -1,32 +1,32 @@
 #![feature(map_first_last)]
-use crossbeam::channel::unbounded;
-
-use rand::RngCore;
-use crossbeam::channel::{Sender, Receiver};
-use std::net::SocketAddr;
-
-use std::sync::Arc;
-use std::sync::Mutex;
 
 
-use serde::{Deserialize, Serialize};
-use std::net::UdpSocket;
 
 
-use std::result::Result;
-use std::io::Error;
-use std::collections::HashMap;
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 pub mod proto;
 pub mod transport;
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::VecDeque, net::{SocketAddr, ToSocketAddrs}};
+    use std::{net::{SocketAddr, ToSocketAddrs}};
 
     use crossbeam::channel::unbounded;
 
-    use crate::{proto::{handler::UdppHandler, socket::{UdppServer, UdppSession}}};
+    use crate::{proto::{socket::{UdppServer, UdppSession}}};
 
     fn socket_addr(string: &str) -> SocketAddr {
         string
@@ -69,8 +69,8 @@ mod tests {
         let (sender1, receiver1) = unbounded();
         let (sender2, receiver2) = unbounded();
 
-        let mut server1 = UdppServer::new(Box::new(sender1), Box::new(receiver2));
-        let mut conn = UdppSession::new(Box::new(sender2), Box::new(receiver1), socket_addr("127.0.0.1:8080")).await;
+        let server1 = UdppServer::new(Box::new(sender1), Box::new(receiver2));
+        let conn = UdppSession::new(Box::new(sender2), Box::new(receiver1), socket_addr("127.0.0.1:8080")).await;
 
         println!("{:?}", server1);
         println!("{:?}", conn);
