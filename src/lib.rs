@@ -24,7 +24,7 @@ pub mod transport;
 mod tests {
     use std::{net::{SocketAddr, ToSocketAddrs}};
 
-    use crossbeam::channel::unbounded;
+    use async_std::channel::unbounded;
 
     use crate::{proto::{socket::{UdppServer, UdppSession}}};
 

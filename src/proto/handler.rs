@@ -305,7 +305,7 @@ impl UdppHandler {
         }
     }
 
-    pub fn establish_session(&mut self, remote_address: SocketAddr, handler: Arc<Mutex<UdppHandler>>) -> SessionFuture {
+    pub async fn establish_session(&mut self, remote_address: SocketAddr, handler: Arc<Mutex<UdppHandler>>) -> SessionFuture {
         let session_id = Uuid::new_v4();
         let mut initiator = snow::Builder::new(NOISE_PARAMS.parse().unwrap())
             .local_private_key(&self.keypair.private)
@@ -316,17 +316,17 @@ impl UdppHandler {
         let session = Session::new(session_id, remote_address, NoiseState::Handshake(initiator), self.sender.clone());
         self.sessions.insert(session_id, session);
         let handshake_packet = UdppPacket::handshake(session_id, response_buf[..len].to_vec());
-        self.send_packet(remote_address, handshake_packet).unwrap();
+        self.send_packet(remote_address, handshake_packet).await.unwrap();
         SessionFuture {
             session_id,
             handler
         }
     }
 
-    pub fn send_packet(&mut self, addr: SocketAddr, packet: UdppPacket) -> Result<usize, std::io::Error> {
+    pub async fn send_packet(&mut self, addr: SocketAddr, packet: UdppPacket) -> Result<usize, std::io::Error> {
         let serialized = bincode::serialize(&packet).unwrap();
         let sink_guard = &mut self.sender.lock().unwrap();
-        sink_guard.addressed_send(addr, serialized)
+        sink_guard.addressed_send(addr, serialized).await
     }
 
     pub fn send_content(&mut self, session_id: Uuid, content: UdppContent) -> Result<(), snow::Error> {
@@ -364,14 +364,16 @@ impl UdppHandler {
     pub fn handle_incoming(&mut self, src: SocketAddr, data: Vec<u8>) -> Option<Uuid> {
         match UdppHandler::read_packet(data) {
             Ok(UdppPacket { session_id, payload }) => {
-                if let Some(waker) = self.wakers.get(&session_id) {
-                    waker.wake_by_ref();
-                }
                 match payload {
                     UdppPayload::Handshake(payload) => {
                         match self.handshake(src, session_id, payload) {
                             Ok(None) => { /* nothing */}
-                            Ok(Some(packet)) => { self.send_packet(src, packet); },
+                            Ok(Some(packet)) => {
+                                self.send_packet(src, packet);
+                                if let Some(waker) = self.wakers.get(&session_id) {
+                                    waker.wake_by_ref();
+                                }
+                            },
                             Err(e) => { eprintln!("{:?}", e); },
                         }
                     },
@@ -386,6 +388,10 @@ impl UdppHandler {
                                             Ok(len) => {
                                                 if let Ok(payload) = bincode::deserialize::<CleartextPayload>(&read_buf[..len]) {
                                                     session.handle_payload(payload);
+
+                                                    if let Some(waker) = self.wakers.get(&session_id) {
+                                                        waker.wake_by_ref();
+                                                    }
                                                 }
                                             },
                                             Err(_) => { /* failed to read */},

@@ -17,8 +17,8 @@ impl UdppServer {
         let handler_clone = handler.clone();
         tokio::spawn(async move {
             loop {
-                if let Ok((src, data)) = receiver.addressed_recv() {
-                    println!("foo");
+                println!("foo");
+                if let Ok((src, data)) = receiver.addressed_recv().await {
                     let mut handler_guard = handler_clone.lock().unwrap();
                     handler_guard.handle_incoming(src, data);
                     println!("foo2");
@@ -67,18 +67,18 @@ impl UdppSession {
         let handler_clone = handler.clone();
         tokio::spawn(async move {
             loop {
-                if let Ok((src, data)) = receiver.addressed_recv() {
-                    println!("foo");
+                if let Ok((src, data)) = receiver.addressed_recv().await {
+                    println!("bar");
                     let mut handler_guard = handler_clone.lock().unwrap();
                     handler_guard.handle_incoming(src, data);
-                    println!("foo2");
+                    println!("bar2");
                 }
             }
         });
         let handler_clone = handler.clone();
         let session_id_future = {
             let mut handler_guard = handler_clone.lock().unwrap();
-            handler_guard.establish_session(addr, handler.clone())
+            handler_guard.establish_session(addr, handler.clone()).await
         };
         let session_id = session_id_future.await.unwrap();
         UdppSession {
