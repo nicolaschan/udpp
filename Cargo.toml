@@ -20,5 +20,6 @@ rand = "0.8"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 snow = "0.8.0"
+tokio = { version = "1.13.0", features = ["rt", "macros"] }
 uuid = { version = "0.8", features = ["serde", "v4"] }
 x25519-dalek = "2.0.0-pre.1"
