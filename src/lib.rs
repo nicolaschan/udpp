@@ -56,17 +56,13 @@ mod tests {
         let server = UdppServer::new(Box::new(sender1), Box::new(receiver2));
         let mut conn = UdppSession::new(Box::new(sender2), Box::new(receiver1), socket_addr("127.0.0.1:8080")).await;
 
-        println!("{:?}", server);
-        println!("{:?}", conn);
-
         let data: Vec<u8> = vec![1,2,3,4];
+        let expected = data.clone();
         let mut incoming = server.incoming();
         let mut server_conn = incoming.accept().await;
 
-        conn.send(&data).await;
-        println!("bruh");
-        println!("{:?}", server_conn);
-        let received = server_conn.recv().await;
-        assert_eq!(data, received);
+        conn.send(data).await;
+        let actual = server_conn.recv().await;
+        assert_eq!(expected, actual);
     }
 }

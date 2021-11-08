@@ -89,9 +89,9 @@ impl UdppSession {
             handler,
         }
     }
-    pub async fn send(&mut self, data: &Vec<u8>) {
+    pub async fn send(&mut self, data: Vec<u8>) {
         let mut handler_guard = self.handler.lock().await;
-        handler_guard.send_data(self.session_id, data.clone()).await;
+        handler_guard.send_data(self.session_id, data).await;
     }
     pub async fn try_recv(&mut self) -> Option<Vec<u8>> {
         let mut handler_guard = self.handler.lock().await;
