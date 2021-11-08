@@ -1,8 +1,4 @@
-use std::{cmp::max, collections::{BTreeMap, HashMap, HashSet, VecDeque}, future::Future, net::SocketAddr, slice::SliceIndex, sync::{Arc, Mutex, atomic::AtomicBool}, task::{Poll, Waker}, time::{Instant, SystemTime, UNIX_EPOCH}};
-
-
-
-use actix_web::dev::Service;
+use std::{cmp::max, collections::{BTreeMap, HashMap, HashSet, VecDeque}, future::Future, net::SocketAddr, sync::{Arc, Mutex}, task::{Poll, Waker}, time::{SystemTime, UNIX_EPOCH}};
 
 use async_std::{channel::{Receiver, Sender, unbounded}};
 use snow::{HandshakeState, Keypair, TransportState};
@@ -30,10 +26,12 @@ pub struct FragmentCollection {
 
 impl FragmentCollection {
     pub fn new(length: u64) -> FragmentCollection {
+        let fragments = vec![None; length as usize];
+        println!("fragment collection fragments init: {:?}", fragments);
         FragmentCollection {
             length,
             size: 0,
-            fragments: vec![None; length as usize],
+            fragments,
         }
     }
 
@@ -48,12 +46,14 @@ impl FragmentCollection {
 
     pub fn recv(mut self) -> Option<Vec<u8>> {
         let mut data: Vec<u8> = Vec::new();
-        for fragment in self.fragments.iter_mut() {
+        println!("fragment recv fragments: {:?}", self.fragments);
+        for (fragment, _index) in self.fragments.iter_mut().zip(1..self.length + 1) {
             match fragment {
                 Some(chunk) => { data.append(chunk); },
                 None => { return None; },
             }
         }
+        println!("fragment recv data: {:?}", data);
         Some(data)
     }
 }
@@ -63,6 +63,12 @@ pub struct CongestionMonitor {
     pub start_index: u64, // index after which to report (inclusive)
     pub end_index: u64,  // latest index received (exclusive)
     pub number_accepted: u64,
+}
+
+impl Default for CongestionMonitor {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl CongestionMonitor {
@@ -85,11 +91,12 @@ impl CongestionMonitor {
     }
 }
 
+#[derive(Debug)]
 pub struct Session {
     pub session_id: Uuid,
     pub remote_address: SocketAddr,
     pub noise_state: NoiseState,
-    pub payload_queue: VecDeque<Vec<u8>>,
+    pub payload_buffer: Arc<Mutex<VecDeque<Vec<u8>>>>,
     pub fragments: BTreeMap<u64, FragmentCollection>,
     pub incoming_congestion: CongestionMonitor,
     pub outgoing_congestion: CongestionReport,
@@ -99,19 +106,19 @@ pub struct Session {
     pub fragment_size: usize,
 }
 
-impl std::fmt::Debug for Session {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Session")
-            .field("remote_address", &self.remote_address)
-            .field("noise_state", &self.noise_state)
-            .field("payload_queue", &self.payload_queue)
-            .field("fragments", &self.fragments)
-            .field("incoming_congestion", &self.incoming_congestion)
-            .field("outgoing_congestion", &self.outgoing_congestion)
-            .field("latency", &self.latency)
-            .finish()
-    }
-}
+// impl std::fmt::Debug for Session {
+//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+//         f.debug_struct("Session")
+//             .field("remote_address", &self.remote_address)
+//             .field("noise_state", &self.noise_state)
+//             .field("payload_sender", &self.payload_queue)
+//             .field("fragments", &self.fragments)
+//             .field("incoming_congestion", &self.incoming_congestion)
+//             .field("outgoing_congestion", &self.outgoing_congestion)
+//             .field("latency", &self.latency)
+//             .finish()
+//     }
+// }
 
 fn unix_time() -> u128 {
     let start = SystemTime::now();
@@ -127,7 +134,7 @@ impl Session {
             session_id,
             remote_address, 
             noise_state, 
-            payload_queue: VecDeque::new(), 
+            payload_buffer: Arc::new(Mutex::new(VecDeque::new())),
             fragments: BTreeMap::new(),
             incoming_congestion: CongestionMonitor::new(),
             outgoing_congestion: CongestionReport::new(0, 0, 0),
@@ -194,16 +201,20 @@ impl Session {
                 }
             },
             UdppContent::DataFragment { group_index, fragment_index, number_of_fragments, payload } => {
-                self.fragments.entry(group_index).or_insert_with(|| {
-                    let fragment_collection = FragmentCollection::new(number_of_fragments);
-                    fragment_collection
-                });
+                println!("recv datafragment");
+                self.fragments.entry(group_index).or_insert_with(|| FragmentCollection::new(number_of_fragments));
                 if let Some(collection) = self.fragments.get_mut(&group_index) {
                     collection.insert_fragment(fragment_index, payload);
+                    println!("recv datafragment - insert collection");
                     if collection.is_ready() {
+                        println!("recv datafragment - collection ready");
                         if let Some(collection) = self.fragments.remove(&group_index) {
+                            println!("recv datafragment - get collection {:?}", collection);
                             if let Some(data) = collection.recv() {
-                                self.payload_queue.push_back(data);
+                                println!("recv datafragment - recv collection");
+                                let mut payload_buffer_guard= self.payload_buffer.lock().unwrap();
+                                payload_buffer_guard.push_back(data);
+                                println!("recv datafragment - inserted payload buffer");
                             }
                         }
                     }
@@ -217,8 +228,9 @@ impl Session {
     pub fn outgoing_congestion(&mut self) -> CongestionReport {
         todo!()
     }
-    pub fn recv(&mut self) -> Option<Vec<u8>> {
-        self.payload_queue.pop_front()
+    pub fn try_recv(&mut self) -> Option<Vec<u8>> {
+        let mut payload_buffer_guard = self.payload_buffer.lock().unwrap();
+        payload_buffer_guard.pop_front()
     }
 }
 
@@ -325,7 +337,7 @@ impl UdppHandler {
         let session = Session::new(session_id, remote_address, NoiseState::Handshake(initiator));
         self.sessions.insert(session_id, session);
         let handshake_packet = UdppPacket::handshake(session_id, response_buf[..len].to_vec());
-        self.send_packet(remote_address, handshake_packet).await.unwrap();
+        self.send_packet(remote_address, handshake_packet).await;
         let wakers = self.wakers.clone();
         SessionFuture {
             session_id,
@@ -334,39 +346,21 @@ impl UdppHandler {
         }
     }
 
-    pub async fn send_packet(&mut self, addr: SocketAddr, packet: UdppPacket) -> Result<usize, std::io::Error> {
+    pub async fn send_packet(&mut self, addr: SocketAddr, packet: UdppPacket) {
         let serialized = bincode::serialize(&packet).unwrap();
-        self.sender.addressed_send(addr, serialized).await
-    }
-
-    pub async fn send_content(&mut self, session_id: Uuid, content: UdppContent) -> Result<(), snow::Error> {
-        if let Some(session) = self.sessions.remove(&session_id) {
-            if let NoiseState::Transport(mut transport) = session.noise_state {
-                let serialized = bincode::serialize(&content).unwrap();
-                let mut data = [0u8; 65535];
-                let len = transport.write_message(&serialized[..], &mut data)?;
-                let packet = UdppPacket {
-                    session_id,
-                    payload: UdppPayload::Encrypted(data[..len].to_vec()),
-                };
-                self.send_packet(session.remote_address, packet).await.unwrap();
-                let session = Session::new(session_id, session.remote_address, NoiseState::Transport(transport));
-                self.sessions.insert(session_id, session);
-            }
-        }
-        Ok(())
+        self.sender.addressed_send(addr, serialized).await.unwrap();
     }
 
     pub async fn send_data(&mut self, session_id: Uuid, data: Vec<u8>) {
         if let Some(session) = self.sessions.get_mut(&session_id) {
             for (addr, packet) in session.send_data(data) {
-                self.send_packet(addr, packet).await.unwrap();
+                self.send_packet(addr, packet).await;
             }
         }
     }
-    pub fn recv_session(&mut self, session_id: Uuid) -> Option<Vec<u8>> {
+    pub fn try_recv_session(&mut self, session_id: Uuid) -> Option<Vec<u8>> {
         self.sessions.get_mut(&session_id)
-            .and_then(|session| session.recv())
+            .and_then(|session| session.try_recv())
     }
 
     pub fn read_packet(data: Vec<u8>) -> Result<UdppPacket, Box<bincode::ErrorKind>> {
@@ -374,42 +368,40 @@ impl UdppHandler {
     }
 
     pub async fn handle_incoming(&mut self, src: SocketAddr, data: Vec<u8>) -> Option<Uuid> {
-        match UdppHandler::read_packet(data) {
-            Ok(UdppPacket { session_id, payload }) => {
-                match payload {
-                    UdppPayload::Handshake(payload) => {
-                        match self.handshake(src, session_id, payload).await {
-                            Ok(None) => { /* nothing */}
-                            Ok(Some(packet)) => {
-                                self.send_packet(src, packet).await.unwrap();
-                            },
-                            Err(e) => { eprintln!("{:?}", e); },
-                        }
-                        if let Some(waker) = self.wakers.lock().unwrap().get(&session_id) {
-                            waker.wake_by_ref();
-                        }
-                    },
-                    UdppPayload::Encrypted(encrypted_payload) => {
-                        match self.sessions.get_mut(&session_id) {
-                            Some(session) => {
-                                match &mut session.noise_state {
-                                    NoiseState::Handshake(_) => { /* handshake not complete */},
-                                    NoiseState::Transport(transport_state) => {
-                                        let mut read_buf = [0u8; 65535];
-                                        if let Ok(len) = transport_state.read_message(&encrypted_payload[..], &mut read_buf) {
-                                            if let Ok(payload) = bincode::deserialize::<CleartextPayload>(&read_buf[..len]) {
-                                                session.handle_payload(payload);
-                                            }
+        if let Ok(UdppPacket { session_id, payload }) = UdppHandler::read_packet(data) {
+            match payload {
+                UdppPayload::Handshake(payload) => {
+                    match self.handshake(src, session_id, payload).await {
+                        Ok(None) => { /* nothing */}
+                        Ok(Some(packet)) => {
+                            self.send_packet(src, packet).await;
+                        },
+                        Err(e) => { eprintln!("{:?}", e); },
+                    }
+                    if let Some(waker) = self.wakers.lock().unwrap().get(&session_id) {
+                        waker.wake_by_ref();
+                    }
+                },
+                UdppPayload::Encrypted(encrypted_payload) => {
+                    if let Some(session) = self.sessions.get_mut(&session_id) {
+                        match &mut session.noise_state {
+                            NoiseState::Handshake(_) => { /* handshake not complete */},
+                            NoiseState::Transport(transport_state) => {
+                                let mut read_buf = [0u8; 65535];
+                                if let Ok(len) = transport_state.read_message(&encrypted_payload[..], &mut read_buf) {
+                                    if let Ok(payload) = bincode::deserialize::<CleartextPayload>(&read_buf[..len]) {
+                                        session.handle_payload(payload);
+                                        let wakers_guard = self.wakers.lock().unwrap();
+                                        if let Some(waker) = wakers_guard.get(&session_id) {
+                                            waker.wake_by_ref();
                                         }
-                                    },
+                                    }
                                 }
                             },
-                            None => { /* can't decrypt! */}
                         }
-                    },
-                }
-            },
-            Err(_) => { /* invalid packet format */ }
+                    }
+                },
+            }
         };
         None
     }
@@ -425,10 +417,8 @@ impl Future for SessionFuture {
     type Output = Result<Uuid, std::io::Error>;
 
     fn poll(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Self::Output> {
-        println!("hi");
         let mut waker_guard = self.wakers.lock().unwrap();
         let sessions_guard = self.ready_sessions.lock().unwrap();
-        println!("hi2");
         if sessions_guard.contains(&self.session_id) {
             waker_guard.remove(&self.session_id);
             return Poll::Ready(Ok(self.session_id));

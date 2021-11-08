@@ -49,14 +49,24 @@ mod tests {
     // }
 
     #[tokio::test]
-    async fn test_server() {
+    async fn test_client_sends_to_server() {
         let (sender1, receiver1) = unbounded();
         let (sender2, receiver2) = unbounded();
 
-        let server1 = UdppServer::new(Box::new(sender1), Box::new(receiver2));
-        let conn = UdppSession::new(Box::new(sender2), Box::new(receiver1), socket_addr("127.0.0.1:8080")).await;
+        let server = UdppServer::new(Box::new(sender1), Box::new(receiver2));
+        let mut conn = UdppSession::new(Box::new(sender2), Box::new(receiver1), socket_addr("127.0.0.1:8080")).await;
 
-        println!("{:?}", server1);
+        println!("{:?}", server);
         println!("{:?}", conn);
+
+        let data: Vec<u8> = vec![1,2,3,4];
+        let mut incoming = server.incoming();
+        let mut server_conn = incoming.accept().await;
+
+        conn.send(&data).await;
+        println!("bruh");
+        println!("{:?}", server_conn);
+        let received = server_conn.recv().await;
+        assert_eq!(data, received);
     }
 }
