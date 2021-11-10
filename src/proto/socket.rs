@@ -35,9 +35,8 @@ impl UdppServer {
         }
     }
 
-    pub fn from_socket(socket: UdpSocket) -> UdppServer {
-        let socket_arc = Arc::new(socket);
-        UdppServer::new(Box::new(socket_arc.clone()), Box::new(socket_arc))
+    pub fn from_socket(socket: Arc<UdpSocket>) -> UdppServer {
+        UdppServer::new(Box::new(socket.clone()), Box::new(socket))
     }
 
     pub fn incoming(self) -> IncomingUdppSessions {

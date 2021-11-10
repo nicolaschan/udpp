@@ -6,7 +6,7 @@ pub mod transport;
 
 #[cfg(test)]
 mod tests {
-    use std::{net::{SocketAddr, ToSocketAddrs}};
+    use std::{net::{SocketAddr, ToSocketAddrs}, sync::Arc};
 
     use async_std::{channel::unbounded, net::UdpSocket};
 
@@ -111,7 +111,7 @@ mod tests {
     #[tokio::test]
     async fn test_over_udp() {
         let addr = socket_addr("127.0.0.1:8081");
-        let socket1 = UdpSocket::bind(addr).await.unwrap();
+        let socket1 = Arc::new(UdpSocket::bind(addr).await.unwrap());
 
         let server = UdppServer::from_socket(socket1);
         let mut client = UdppSession::connect(addr).await.unwrap();
