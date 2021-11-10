@@ -94,6 +94,11 @@ impl UdppSession {
             handler,
         }
     }
+    pub async fn remote_address(&self) -> SocketAddr {
+        let handler_guard = self.handler.lock().await;
+        let session = handler_guard.sessions.get(&self.session_id).unwrap();
+        session.remote_address
+    }
     pub async fn connect(addr: SocketAddr) -> Result<UdppSession, std::io::Error> {
         let socket = UdpSocket::bind("0.0.0.0:0").await?;
         Ok(UdppSession::from_socket(socket, addr).await)
