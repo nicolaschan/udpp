@@ -8,7 +8,7 @@ pub mod transport;
 mod tests {
     use std::{net::{SocketAddr, ToSocketAddrs}};
 
-    use async_std::channel::unbounded;
+    use async_std::{channel::unbounded, net::UdpSocket};
 
     use crate::{proto::{socket::{UdppServer, UdppSession}}};
 
@@ -93,7 +93,7 @@ mod tests {
 
         let data: Vec<u8> = vec![1,2,3,4];
         let expected = data.clone();
-        let data2: Vec<u8> = vec![1,2,3,4];
+        let data2: Vec<u8> = vec![5,6,7,8];
         let expected2 = data2.clone();
         let mut incoming = server.incoming();
         let mut server_conn = incoming.accept().await;
@@ -106,6 +106,23 @@ mod tests {
 
         let actual2 = server_conn.recv().await;
         assert_eq!(expected2, actual2);
+    }
 
+    #[tokio::test]
+    async fn test_over_udp() {
+        let addr = socket_addr("127.0.0.1:8081");
+        let socket1 = UdpSocket::bind(addr).await.unwrap();
+
+        let server = UdppServer::from_socket(socket1);
+        let mut client = UdppSession::connect(addr).await.unwrap();
+
+        let data: Vec<u8> = vec![1,2,3,4];
+        let expected = data.clone();
+
+        let mut server_conn = server.incoming().accept().await;
+        server_conn.send(data).await;
+
+        let actual = client.recv().await;
+        assert_eq!(expected, actual);
     }
 }

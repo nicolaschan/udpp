@@ -1,6 +1,6 @@
 use std::{collections::{HashMap, VecDeque}, future::Future, net::SocketAddr, sync::{Arc}, task::{Poll, Waker}};
 
-use async_std::sync::Mutex;
+use async_std::{net::UdpSocket, sync::Mutex};
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 
@@ -33,6 +33,11 @@ impl UdppServer {
             handler,
             processor_handle,
         }
+    }
+
+    pub fn from_socket(socket: UdpSocket) -> UdppServer {
+        let socket_arc = Arc::new(socket);
+        UdppServer::new(Box::new(socket_arc.clone()), Box::new(socket_arc))
     }
 
     pub fn incoming(self) -> IncomingUdppSessions {
@@ -88,6 +93,14 @@ impl UdppSession {
             session_id,
             handler,
         }
+    }
+    pub async fn connect(addr: SocketAddr) -> Result<UdppSession, std::io::Error> {
+        let socket = UdpSocket::bind("0.0.0.0:0").await?;
+        Ok(UdppSession::from_socket(socket, addr).await)
+    }
+    pub async fn from_socket(socket: UdpSocket, addr: SocketAddr) -> UdppSession {
+        let socket_arc = Arc::new(socket);
+        UdppSession::new(Box::new(socket_arc.clone()), Box::new(socket_arc), addr).await
     }
     pub async fn send(&mut self, data: Vec<u8>) {
         let mut handler_guard = self.handler.lock().await;
