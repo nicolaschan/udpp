@@ -1,3 +1,4 @@
-pub mod structs;
+pub mod data;
 pub mod handler;
-pub mod socket;
+pub mod handshake;
+pub mod session;
