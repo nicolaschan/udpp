@@ -1,19 +1,9 @@
-
-
-
-
-
-
 use async_trait::async_trait;
-
-
-
 
 use crate::proto::handshake::{
     HandshakeInitiation, HandshakeResponse, SnowInitiator, SnowResponder,
 };
 use crate::proto::session::{Session, SessionInitiator};
-
 
 pub struct HolepunchKeepalive;
 
@@ -112,11 +102,6 @@ impl Holepunching<Punched> {
 
 #[cfg(test)]
 mod tests {
-    
-
-    
-    
-
     use crate::proto::{data::Message};
 
     use super::{Holepunching, Initiating, Waiting};
