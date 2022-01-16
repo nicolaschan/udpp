@@ -75,6 +75,13 @@ impl Handler {
         }
     }
 
+    pub fn remote_addr(&self, id: SessionId) -> Option<SocketAddr> {
+        match self.established_sessions.get(&id) {
+            Some(session) => Some(session.remote_addr),
+            None => None,
+        }
+    }
+
     pub async fn try_next_outgoing(&mut self) -> Option<(SocketAddr, Vec<u8>)> {
         let (addr, packet) = self.outgoing_receiver.try_recv().ok()?;
         let serialized = bincode::serialize(&packet).unwrap();

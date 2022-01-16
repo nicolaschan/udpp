@@ -133,7 +133,7 @@ impl PendingSessionResponder {
 
 pub struct Session {
     id: SessionId,
-    remote_addr: SocketAddr,
+    pub remote_addr: SocketAddr,
     sender: UnboundedSender<(SocketAddr, SessionPacket)>,
     messages_sender: Sender<Vec<u8>>,
     messages_receiver: Receiver<Vec<u8>>,

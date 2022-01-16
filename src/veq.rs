@@ -105,4 +105,8 @@ impl VeqSession {
         };
         future.await
     }
+    pub async fn remote_addr(&self) -> SocketAddr {
+        let guard = self.handler.lock().await;
+        guard.remote_addr(self.id).unwrap()
+    }
 }

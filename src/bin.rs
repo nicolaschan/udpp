@@ -1,4 +1,4 @@
-use std::{io::{BufRead, Read, Write}, net::SocketAddr};
+use std::{io::{BufRead, Read, Write}};
 
 use clap::Parser;
 
@@ -24,7 +24,7 @@ async fn main() {
     let args = Args::parse();
     let mut socket = VeqSocket::bind(format!("0.0.0.0:{}", args.port)).await.unwrap();
 
-    let mut conn_info = socket.connection_info();
+    let conn_info = socket.connection_info();
     let id = Uuid::from_u128(0);
     let connection_data = ConnectionData { id, conn_info };
     let conn_data_serialized = bincode::serialize(&connection_data).unwrap();
@@ -42,7 +42,7 @@ async fn main() {
     let peer_data = bincode::deserialize::<ConnectionData>(&peer_data_serialized[..]).unwrap();
 
     let mut conn = socket.connect(peer_data.id, peer_data.conn_info).await;
-    println!("connected");
+    println!("connected to {}", conn.remote_addr().await);
 
     let mut conn_clone = conn.clone();
     tokio::spawn(async move {
