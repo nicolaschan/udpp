@@ -11,7 +11,7 @@ pub trait AddressedSender {
 #[async_trait]
 impl AddressedSender for Sender<(SocketAddr, Vec<u8>)> {
     async fn send(&self, addr: SocketAddr, data: Vec<u8>) {
-        self.send((addr, data)).await;
+        self.send((addr, data)).await.unwrap();
     }
 }
 

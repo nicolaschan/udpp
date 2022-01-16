@@ -1,87 +1,77 @@
+#![allow(dead_code)]
+#![allow(unused_imports)]
+#![allow(unused_variables)]
+
 #![feature(map_first_last)]
 #![feature(async_stream)]
 #![feature(untagged_unions)]
 #![feature(future_join)]
 #![feature(future_poll_fn)]
 
-use std::{net::SocketAddr, future::Future, pin::Pin, task::{Context, Poll}, sync::Arc};
+use tokio::join;
+use uuid::Uuid;
 
-use async_std::net::UdpSocket;
-use async_trait::async_trait;
-use proto::{data::{SnowKeypair, SnowPublicKey}, bidirectional::Bidirectional, coordinator::{Coordinator, PendingConnection}};
-use snow::Keypair;
-
-mod holepunch;
-mod proto;
+pub mod veq;
 mod transport;
-
-#[derive(Clone, Debug)]
-pub struct ConnectionInfo {
-    addresses: Vec<SocketAddr>,
-    public_key: SnowPublicKey,
-}
-
-pub struct Peer {
-    coordinator: Coordinator,
-    connection_info: ConnectionInfo,
-    keypair: SnowKeypair,
-}
-
-impl Peer {
-    pub async fn new() -> Peer {
-        let socket = Arc::new(UdpSocket::bind("0.0.0.0:0").await.unwrap());
-        let keypair = SnowKeypair::new();
-        let connection_info = ConnectionInfo {
-            addresses: vec![socket.local_addr().unwrap()],
-            public_key: keypair.public(),
-        };
-        let coordinator = Coordinator::new(socket.clone(), socket);
-        Peer { coordinator, connection_info, keypair }
-    }
-
-    pub fn connection_info(&self) -> ConnectionInfo {
-        self.connection_info.clone()
-    }
-
-    pub fn connect(&mut self, peer_info: ConnectionInfo) -> PendingConnection {
-        self.coordinator.connect(peer_info)
-    }
-}
+mod handler;
+mod snow_types;
+mod session;
 
 #[cfg(test)]
 mod tests {
     use tokio::join;
+    use uuid::Uuid;
 
-    use crate::{Peer, proto::bidirectional::Bidirectional};
+    use crate::{veq::{VeqSocket, VeqSession}};
 
+    async fn get_conns() -> (VeqSession, VeqSession) {
+        let mut socket1 = VeqSocket::bind("0.0.0.0:0").await.unwrap();
+        let mut socket2 = VeqSocket::bind("0.0.0.0:0").await.unwrap();
+
+        let id = Uuid::new_v4();
+        let info1 = socket1.connection_info();
+        let info2 = socket2.connection_info();
+        return join!(
+            socket1.connect(id, info2),
+            socket2.connect(id, info1),
+        );
+    }
 
     #[tokio::test]
-    async fn test_handshake() {
-        let mut peer1 = Peer::new().await;
-        let mut peer2 = Peer::new().await;
+    async fn test_bind_port() {
+        let port = 1337;
+        let socket = VeqSocket::bind(format!("0.0.0.0:{}", port)).await.unwrap();
+        let connection_info = socket.connection_info();
+        let bound_port = connection_info.addresses.get(0).unwrap().port();
+        assert_eq!(port, bound_port);
+    }
 
-        let peer1_info = peer1.connection_info();
-        let peer2_info = peer2.connection_info();
+    #[tokio::test]
+    async fn test_bidirectional_small() {
+        let (mut conn1, mut conn2) = get_conns().await;
 
-        println!("{:?}", peer1_info);
-
-        let (mut conn1, mut conn2) = join!(
-            peer1.connect(peer2.connection_info()),
-            peer2.connect(peer1.connection_info()),
-        );
-
-        let data: Vec<u8> = vec![1, 2, 3, 4];
+        let data = vec![0,1,2,3];
         conn1.send(data.clone()).await;
-
         let received = conn2.recv().await;
         assert_eq!(data, received);
 
-        // let mut initiator1 = SessionInitiator::new();
-        // let mut initiator2 = SessionInitiator::new();
+        let data2 = vec![5,6,7,8];
+        conn2.send(data2.clone()).await;
+        let received2 = conn1.recv().await;
+        assert_eq!(data2, received2);
+    }
 
-        // let initiation = initiator1.initiation();
-        // let (session2, response) = initiator2.receive_initiation(initiation);
-
-        // let session1 = initiator1.receive_response(response).unwrap();
+    #[tokio::test]
+    async fn test_queued_small() {
+        let (mut conn1, mut conn2) = get_conns().await;
+        let data1 = vec![0,1,2,3];
+        let data2 = vec![5,4,3,2];
+        let data3 = vec![7,8,9,10];
+        conn1.send(data1.clone()).await;
+        conn1.send(data2.clone()).await;
+        conn1.send(data3.clone()).await;
+        assert_eq!(data1, conn2.recv().await);
+        assert_eq!(data2, conn2.recv().await);
+        assert_eq!(data3, conn2.recv().await);
     }
 }
