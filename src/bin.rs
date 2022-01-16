@@ -32,14 +32,14 @@ async fn main() {
     zstd::stream::copy_encode(&conn_data_serialized[..], &mut conn_data_compressed, 10).unwrap();
     let conn_data_emoji = base_emoji::to_string(&conn_data_compressed);
 
-    println!("Your connection string: {}", conn_data_emoji);
+    println!("Your connection string:\n{}", conn_data_emoji);
     print!("Enter remote connection string: ");
     std::io::stdout().flush().unwrap();
 
     let stdin = std::io::stdin();
     let mut peer_data_emoji = String::new();
     stdin.lock().read_line(&mut peer_data_emoji).unwrap();
-    let peer_data_emoji = peer_data_emoji.strip_suffix("\n").unwrap();
+    let peer_data_emoji = peer_data_emoji.replace("\n", "").replace(" ", "");
     let peer_data_compressed = base_emoji::try_from_str(peer_data_emoji).unwrap();
     let mut peer_data_serialized = Vec::new();
     zstd::stream::copy_decode(&peer_data_compressed[..], &mut peer_data_serialized).unwrap();
