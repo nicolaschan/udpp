@@ -12,16 +12,32 @@ pub fn local_ips(port: u16) -> HashSet<SocketAddr> {
         .collect();
 }
 
-pub async fn public_v4(socket: &UdpSocket) -> Option<SocketAddr> {
-    let stun_addr_v4 = "stun.l.google.com:19302".to_socket_addrs().unwrap().filter(|x|x.is_ipv4()).next()?;
-    let client = StunClient::new(stun_addr_v4);
-    client.query_external_address_async(&socket).await.ok()
+pub async fn public_v4(socket: &UdpSocket) -> HashSet<SocketAddr> {
+    let mut ips = HashSet::new();
+    if let Some(stun_addr_v4) = "stun.l.google.com:19302".to_socket_addrs().unwrap().filter(|x|x.is_ipv4()).next() {
+        let client = StunClient::new(stun_addr_v4);
+        if let Ok(addr) = client.query_external_address_async(&socket).await {
+            ips.insert(addr);
+            let mut ip_with_port = addr.clone();
+            ip_with_port.set_port(socket.local_addr().unwrap().port());
+            ips.insert(ip_with_port);
+        }
+    }
+    ips
 }
 
-pub async fn public_v6(socket: &UdpSocket) -> Option<SocketAddr> {
-    let stun_addr_v6 = "stun.l.google.com:19302".to_socket_addrs().unwrap().filter(|x|x.is_ipv6()).next()?;
-    let client = StunClient::new(stun_addr_v6);
-    client.query_external_address_async(&socket).await.ok()
+pub async fn public_v6(socket: &UdpSocket) -> HashSet<SocketAddr> {
+    let mut ips = HashSet::new();
+    if let Some(stun_addr_v4) = "stun.l.google.com:19302".to_socket_addrs().unwrap().filter(|x|x.is_ipv4()).next() {
+        let client = StunClient::new(stun_addr_v4);
+        if let Ok(addr) = client.query_external_address_async(&socket).await {
+            ips.insert(addr);
+            let mut ip_with_port = addr.clone();
+            ip_with_port.set_port(socket.local_addr().unwrap().port());
+            ips.insert(ip_with_port);
+        }
+    }
+    ips
 }
 
 pub async fn discover_ips(socket: &UdpSocket) -> HashSet<SocketAddr> {
@@ -31,8 +47,8 @@ pub async fn discover_ips(socket: &UdpSocket) -> HashSet<SocketAddr> {
 
     ips.insert(local_addr);
     ips.extend(&local_ips(port));
-    public_v4(socket).await.map(|ip| ips.insert(ip));
-    public_v6(socket).await.map(|ip| ips.insert(ip));
+    ips.extend(&public_v4(socket).await);
+    ips.extend(&public_v6(socket).await);
 
     return ips;
 }
