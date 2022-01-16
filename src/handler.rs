@@ -26,6 +26,7 @@ impl Handler {
         }
     }
     pub async fn handle_incoming(&mut self, src: SocketAddr, data: Vec<u8>) {
+        eprintln!("received something from {}", src);
         let packet: SessionPacket = bincode::deserialize(&data[..]).unwrap();
         let id = packet.id;
         if let Some((mut pending_session, wakers)) = self.pending_sessions_initiator.remove(&packet.id) {
