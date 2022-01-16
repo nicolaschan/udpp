@@ -11,9 +11,9 @@ use veq::veq::{VeqSocket, ConnectionInfo};
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
 struct Args {
-    #[clap(short, long, default_value_t = 0)]
+    #[clap(long, default_value_t = 0)]
     port: u64,
-    #[clap(short, long)]
+    #[clap(long)]
     public_ip: Option<SocketAddr>,
 }
 
