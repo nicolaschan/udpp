@@ -32,8 +32,8 @@ async fn main() {
     zstd::stream::copy_encode(&conn_data_serialized[..], &mut conn_data_compressed, 10).unwrap();
     let conn_data_emoji = base64::encode(&conn_data_compressed);
 
-    println!("Your connection string:\n{}", conn_data_emoji);
-    print!("Enter remote connection string: ");
+    eprintln!("Your connection string:\n{}", conn_data_emoji);
+    eprint!("Enter remote connection string: ");
     std::io::stdout().flush().unwrap();
 
     let stdin = std::io::stdin();
@@ -44,9 +44,10 @@ async fn main() {
     let mut peer_data_serialized = Vec::new();
     zstd::stream::copy_decode(&peer_data_compressed[..], &mut peer_data_serialized).unwrap();
     let peer_data = bincode::deserialize::<ConnectionData>(&peer_data_serialized[..]).unwrap();
+    eprintln!("Remote connection string accepted");
 
     let mut conn = socket.connect(peer_data.id, peer_data.conn_info).await;
-    println!("connected to {}", conn.remote_addr().await);
+    eprintln!("Connected to {}", conn.remote_addr().await);
 
     let mut conn_clone = conn.clone();
     tokio::spawn(async move {
@@ -55,6 +56,7 @@ async fn main() {
             let received = conn_clone.recv().await.unwrap();
             stdout.write_all(&received[..]).unwrap();
             stdout.flush().unwrap();
+            println!("");
         }
     });
 
