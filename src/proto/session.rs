@@ -12,7 +12,7 @@ use snow::{types::Cipher, Builder, Keypair, TransportState};
 use uuid::Uuid;
 
 use super::{
-    data::{EncryptedMessage, Message},
+    data::{EncryptedMessage, Message, SnowKeypair},
     handshake::{HandshakeInitiation, HandshakeResponse, SnowInitiator, SnowResponder},
 };
 
@@ -27,21 +27,19 @@ pub enum SessionState {
 }
 
 pub struct SessionInitiator<State> {
-    keypair: Keypair,
+    keypair: SnowKeypair,
     state: State,
-}
-
-static NOISE_PARAMS: &str = "Noise_IX_25519_ChaChaPoly_BLAKE2s";
-fn builder<'a>() -> Builder<'a> {
-    snow::Builder::new(NOISE_PARAMS.parse().unwrap())
 }
 
 impl<T> SessionInitiator<T> {}
 
 impl SessionInitiator<SnowInitiator> {
     pub fn new() -> SessionInitiator<SnowInitiator> {
-        let keypair = builder().generate_keypair().unwrap();
-        let state = SnowInitiator::new(builder().local_private_key(&keypair.private));
+        let keypair = SnowKeypair::new();
+        SessionInitiator::<SnowInitiator>::from_keypair(keypair)
+    }
+    pub fn from_keypair(keypair: SnowKeypair) -> SessionInitiator<SnowInitiator> {
+        let state = SnowInitiator::new(keypair.builder());
         SessionInitiator::<SnowInitiator> { keypair, state }
     }
     pub fn initiation(&mut self) -> HandshakeInitiation {
@@ -55,8 +53,11 @@ impl SessionInitiator<SnowInitiator> {
 
 impl SessionInitiator<SnowResponder> {
     pub fn new() -> SessionInitiator<SnowResponder> {
-        let keypair = builder().generate_keypair().unwrap();
-        let state = SnowResponder::new(builder().local_private_key(&keypair.private));
+        let keypair = SnowKeypair::new();
+        SessionInitiator::<SnowResponder>::from_keypair(keypair)
+    }
+    pub fn from_keypair(keypair: SnowKeypair) -> SessionInitiator<SnowResponder> {
+        let state = SnowResponder::new(keypair.builder());
         SessionInitiator::<SnowResponder> { keypair, state }
     }
     pub fn receive_initiation(

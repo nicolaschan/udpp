@@ -18,6 +18,10 @@ impl Handler {
         }
     }
 
+    pub fn add_session(&mut self, session_id: SessionId, session: Session) {
+        self.active_sessions.insert(session_id, session);
+    }
+
     pub async fn dispatch(&mut self, _src: SocketAddr, packet: SessionPacket) {
         let session_id = packet.session_id();
         if let Some(session) = self.active_sessions.get_mut(&session_id) {

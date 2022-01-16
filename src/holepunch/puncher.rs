@@ -122,6 +122,27 @@ impl Holepuncher<Pending> {
     }
 }
 
+impl Holepuncher<Responding> {
+    pub async fn new(
+        addr: SocketAddr,
+    ) -> Holepuncher<Responding> {
+        let session_id = SessionId::new_v4();
+        let (packet_sender, packet_receiver) = unbounded();
+        let waker = Arc::new(Mutex::new(None));
+        Holepuncher::<Responding> {
+            addr,
+            session_id,
+            packet_sender,
+            packet_receiver,
+            waker,
+            state: Responding,
+        }
+    }
+
+    pub async fn handle_incoming(&self, initiation: HandshakeInitiation) {
+    }
+}
+
 pub struct PunchingHole {
     packet_receiver: Receiver<HandshakeResponse>,
     waker: Arc<Mutex<Option<Waker>>>,
@@ -196,7 +217,7 @@ mod tests {
 
     use crate::proto::handshake::HandshakeInitiation;
 
-    use super::{HolepunchPacket, Holepuncher, Initiating};
+    use super::{HolepunchPacket, Holepuncher, Initiating, Responding};
 
     fn addr() -> SocketAddr {
         "127.0.0.1:8080"
@@ -223,7 +244,15 @@ mod tests {
     #[tokio::test]
     async fn test_punch() {
         let addr = addr();
+        let (sender, receiver): (
+            Sender<(SocketAddr, HandshakeInitiation)>,
+            Receiver<(SocketAddr, HandshakeInitiation)>,
+        ) = unbounded();
+        let initiator = Holepuncher::<Initiating>::new(addr, Box::new(sender));
+        let responder = Holepuncher::<Responding>::new(addr).await;
 
-
+        let (hole, punch) = initiator.punch().await;
+        let (recv_addr, packet) = receiver.recv().await.unwrap();
+        responder.handle_incoming(packet).await;
     }
 }
