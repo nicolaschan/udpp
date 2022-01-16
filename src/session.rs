@@ -23,8 +23,8 @@ impl SessionPacket {
 
 #[derive(Deserialize, Serialize)]
 pub enum Message {
-    HandshakeInitiation,
-    HandshakeResponse,
+    HandshakeInitiation(Uuid),
+    HandshakeResponse(Uuid),
     Keepalive,
     Data(Vec<u8>),
 }
@@ -41,12 +41,12 @@ pub struct PendingSessionInitiator {
 impl PendingSessionInitiator {
     pub async fn new(sender: UnboundedSender<(SocketAddr, SessionPacket)>, id: SessionId, conn_info: ConnectionInfo) -> PendingSessionInitiator {
         let addresses = conn_info.addresses.clone();
-        let serialized_message = bincode::serialize(&Message::HandshakeInitiation).unwrap();
         let sender_clone = sender.clone();
         let handle = tokio::spawn(async move {
             let mut interval = time::interval(Duration::from_millis(1000));
             loop {
                 interval.tick().await;
+                let serialized_message = bincode::serialize(&Message::HandshakeInitiation(Uuid::new_v4())).unwrap();
                 addresses.clone().into_iter().for_each(|addr| {
                     sender_clone.send((addr, SessionPacket::new(id, serialized_message.clone()))).unwrap();
                 });
@@ -62,7 +62,7 @@ impl PendingSessionInitiator {
         }
     }
     pub async fn handle_incoming(&mut self, src: SocketAddr, packet: &SessionPacket) {
-        if let Ok(Message::HandshakeResponse) = bincode::deserialize::<Message>(&packet.data) {
+        if let Ok(Message::HandshakeResponse(_)) = bincode::deserialize::<Message>(&packet.data) {
             self.working_remote_addr = Some(src);
             let mut guard = self.waker.lock().unwrap();
             if let Some(waker)  = guard.take() {
@@ -91,12 +91,12 @@ pub struct PendingSessionResponder {
 impl PendingSessionResponder {
     pub async fn new(sender: UnboundedSender<(SocketAddr, SessionPacket)>, id: SessionId, conn_info: ConnectionInfo) -> PendingSessionResponder {
         let addresses = conn_info.addresses.clone();
-        let serialized_message = bincode::serialize(&Message::HandshakeResponse).unwrap();
         let sender_clone = sender.clone();
         let handle = tokio::spawn(async move {
             let mut interval = time::interval(Duration::from_millis(1000));
             loop {
                 interval.tick().await;
+                let serialized_message = bincode::serialize(&Message::HandshakeResponse(Uuid::new_v4())).unwrap();
                 addresses.clone().into_iter().for_each(|addr| {
                     sender_clone.send((addr, SessionPacket::new(id, serialized_message.clone()))).unwrap();
                 });
@@ -189,8 +189,8 @@ impl Session {
     pub async fn handle_incoming(&mut self, packet: SessionPacket) {
         self.heartbeat.store(true, Ordering::Release);
         match bincode::deserialize::<Message>(&packet.data).unwrap() {
-            Message::HandshakeInitiation => {},
-            Message::HandshakeResponse => {},
+            Message::HandshakeInitiation(_) => {},
+            Message::HandshakeResponse(_) => {},
             Message::Keepalive => {},
             Message::Data(data) => {
                 self.messages_sender.send(data).unwrap();
