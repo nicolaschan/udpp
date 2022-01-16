@@ -3,6 +3,7 @@ use std::{io::Error, sync::Arc, net::SocketAddr, future::Future, pin::Pin, task:
 use async_std::net::{ToSocketAddrs, UdpSocket};
 use serde::{Serialize, Deserialize};
 use snow::Keypair;
+use thiserror::Error;
 use tokio::{task::JoinHandle, sync::Mutex};
 
 use crate::{transport::{AddressedSender, AddressedReceiver}, snow_types::{SnowKeypair, SnowPublicKey}, handler::Handler, session::{Session, SessionId}};
@@ -80,6 +81,12 @@ impl VeqSocket {
     }
 }
 
+#[derive(Error, Debug)]
+pub enum VeqError {
+    #[error("Session disconnected")]
+    Disconnected,
+}
+
 #[derive(Clone)]
 pub struct VeqSession {
     id: SessionId,
@@ -87,11 +94,12 @@ pub struct VeqSession {
 }
 
 impl VeqSession {
-    pub async fn send(&mut self, data: Vec<u8>) {
+    pub async fn send(&mut self, data: Vec<u8>) -> Result<(), VeqError> {
         let mut guard = self.handler.lock().await;
-        guard.send(self.id, data).await;
+        guard.send(self.id, data).await?;
+        Ok(())
     }
-    pub async fn recv(&mut self) -> Vec<u8> {
+    pub async fn recv(&mut self) -> Result<Vec<u8>, VeqError> {
         let future = {
             let mut guard = self.handler.lock().await;
             guard.recv_from(self.id).await.unwrap()

@@ -1,7 +1,5 @@
-use std::{io::{BufRead, Read, Write}, os::unix::prelude::OsStringExt, net::SocketAddr};
+use std::{io::{BufRead, Read, Write}, net::SocketAddr};
 
-use async_std::io::WriteExt;
-use base64::decode;
 use clap::Parser;
 
 use serde::{Deserialize, Serialize};
@@ -37,8 +35,8 @@ async fn main() {
     let conn_data_serialized = bincode::serialize(&connection_data).unwrap();
     let conn_data_b64 = base64::encode(&conn_data_serialized);
 
-    println!("Connection String: {}", conn_data_b64);
-    print!("Enter peer connection string: ");
+    println!("Your connection string: {}", conn_data_b64);
+    print!("Enter remote connection string: ");
     std::io::stdout().flush().unwrap();
 
     let stdin = std::io::stdin();
@@ -55,7 +53,7 @@ async fn main() {
     tokio::spawn(async move {
         let mut stdout = std::io::stdout();
         loop {
-            let received = conn_clone.recv().await;
+            let received = conn_clone.recv().await.unwrap();
             stdout.write_all(&received[..]).unwrap();
             stdout.flush().unwrap();
         }
@@ -64,6 +62,6 @@ async fn main() {
     for line in stdin.lock().lines() {
         let mut data = Vec::new();
         line.unwrap().as_bytes().read_to_end(&mut data).unwrap();
-        conn.send(data).await;
+        conn.send(data).await.unwrap();
     }
 }

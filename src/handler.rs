@@ -2,7 +2,7 @@ use std::{net::SocketAddr, collections::{HashMap, HashSet}, future::Future, sync
 
 use tokio::sync::{mpsc::{Receiver, Sender, channel, unbounded_channel, UnboundedSender, UnboundedReceiver}, Mutex};
 
-use crate::{session::{Session, SessionPacket, SessionId, PendingSessionInitiator, PendingSessionResponder, Receiving}, veq::ConnectionInfo, snow_types::SnowPublicKey};
+use crate::{session::{Session, SessionPacket, SessionId, PendingSessionInitiator, PendingSessionResponder, Receiving}, veq::{ConnectionInfo, VeqError}, snow_types::SnowPublicKey};
 
 pub struct Handler {
     outgoing_sender: UnboundedSender<(SocketAddr, SessionPacket)>,
@@ -59,10 +59,14 @@ impl Handler {
         self.established_sessions.contains_key(&id)
     }
 
-    pub async fn send(&mut self, id: SessionId, data: Vec<u8>) {
+    pub async fn send(&mut self, id: SessionId, data: Vec<u8>) -> Result<(), VeqError> {
         if let Some(session) = self.established_sessions.get_mut(&id) {
-            session.send(data).await;
+            if !session.send(data).await {
+                return Err(VeqError::Disconnected);
+            }
+            return Ok(());
         }
+        Err(VeqError::Disconnected)
     }
     pub async fn recv_from(&mut self, id: SessionId) -> Option<Receiving> {
         match self.established_sessions.get_mut(&id) {

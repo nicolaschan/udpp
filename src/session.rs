@@ -1,11 +1,11 @@
-use std::{future::Future, pin::Pin, task::{Context, Poll, Waker}, net::SocketAddr, time::Duration, sync::{Arc, Mutex}, collections::VecDeque};
+use std::{future::Future, pin::Pin, task::{Context, Poll, Waker}, net::SocketAddr, time::Duration, sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}}, collections::VecDeque};
 
 use crossbeam::channel::{Receiver, Sender, unbounded};
 use serde::{Deserialize, Serialize};
 use tokio::{task::JoinHandle, sync::mpsc::{UnboundedSender, UnboundedReceiver, unbounded_channel}, time};
 use uuid::Uuid;
 
-use crate::veq::ConnectionInfo;
+use crate::veq::{ConnectionInfo, VeqError};
 
 pub type SessionId = Uuid;
 
@@ -48,7 +48,6 @@ impl PendingSessionInitiator {
             loop {
                 interval.tick().await;
                 addresses.clone().into_iter().for_each(|addr| {
-                    println!("initiating...");
                     sender_clone.send((addr, SessionPacket::new(id, serialized_message.clone()))).unwrap();
                 });
             }
@@ -99,7 +98,6 @@ impl PendingSessionResponder {
             loop {
                 interval.tick().await;
                 addresses.clone().into_iter().for_each(|addr| {
-                    println!("responding...");
                     sender_clone.send((addr, SessionPacket::new(id, serialized_message.clone()))).unwrap();
                 });
             }
@@ -141,12 +139,19 @@ pub struct Session {
     messages_receiver: Receiver<Vec<u8>>,
     wakers: Arc<Mutex<VecDeque<Waker>>>,
     handle: JoinHandle<()>,
+    death_handle: JoinHandle<()>,
+    heartbeat: Arc<AtomicBool>,
+    dead: Arc<AtomicBool>,
 }
 
 impl Session {
     fn new(id: SessionId, remote_addr: SocketAddr, sender: UnboundedSender<(SocketAddr, SessionPacket)>) -> Session {
         let (messages_sender, messages_receiver) = unbounded();
         let wakers = Arc::new(Mutex::new(VecDeque::new()));
+
+        let heartbeat = Arc::new(AtomicBool::new(true));
+        let dead = Arc::new(AtomicBool::new(false));
+        let dead_clone = dead.clone();
 
         let sender_clone = sender.clone();
         let handle = tokio::spawn(async move {
@@ -155,13 +160,34 @@ impl Session {
             loop {
                 interval.tick().await;
                 sender_clone.send((remote_addr, SessionPacket::new(id, serialized_message.clone()))).unwrap();
+                if dead_clone.load(Ordering::Acquire) {
+                    break;
+                }
+            }
+        });
+
+        let heartbeat_clone = heartbeat.clone();
+        let dead_clone = dead.clone();
+        let wakers_clone = wakers.clone();
+        let death_handle = tokio::spawn(async move {
+            let mut interval = time::interval(Duration::from_millis(5000));
+            loop {
+                interval.tick().await;
+                if !heartbeat_clone.load(Ordering::Acquire) {
+                    dead_clone.store(true, Ordering::Release);
+                    let guard = wakers_clone.lock().unwrap();
+                    guard.clone().into_iter().for_each(|w: Waker| w.wake_by_ref());
+                    break;
+                }
+                heartbeat_clone.store(false, Ordering::Release);
             }
         });
         Session {
-            id, remote_addr, sender, messages_sender, messages_receiver, wakers, handle
+            id, remote_addr, sender, messages_sender, messages_receiver, wakers, handle, death_handle, heartbeat, dead
         }
     }
     pub async fn handle_incoming(&mut self, packet: SessionPacket) {
+        self.heartbeat.store(true, Ordering::Release);
         match bincode::deserialize::<Message>(&packet.data).unwrap() {
             Message::HandshakeInitiation => {},
             Message::HandshakeResponse => {},
@@ -173,35 +199,46 @@ impl Session {
             },
         };
     }
-    pub async fn send(&mut self, data: Vec<u8>) {
+    pub async fn send(&mut self, data: Vec<u8>) -> bool {
+        if self.is_dead() {
+            return false;
+        }
         let message = Message::Data(data);
         let serialized = bincode::serialize(&message).unwrap();
         let packet = SessionPacket::new(self.id, serialized);
         self.sender.send((self.remote_addr, packet)).unwrap();
+        return true;
     }
     pub fn recv(&mut self) -> Receiving {
-        Receiving::new(self.wakers.clone(), self.messages_receiver.clone())
+        Receiving::new(self.wakers.clone(), self.messages_receiver.clone(), self.dead.clone())
+    }
+    pub fn is_dead(&self) -> bool {
+        self.dead.load(Ordering::Relaxed)
     }
 }
 
 pub struct Receiving {
     wakers: Arc<Mutex<VecDeque<Waker>>>,
     receiver: Receiver<Vec<u8>>,
+    dead: Arc<AtomicBool>,
     added_waker: bool,
 }
 
 impl Receiving {
-    pub fn new(wakers: Arc<Mutex<VecDeque<Waker>>>, receiver: Receiver<Vec<u8>>) -> Receiving {
-        Receiving { wakers, receiver, added_waker: false }     
+    pub fn new(wakers: Arc<Mutex<VecDeque<Waker>>>, receiver: Receiver<Vec<u8>>, dead: Arc<AtomicBool>) -> Receiving {
+        Receiving { wakers, receiver, dead, added_waker: false }     
     }
 }
 
 impl Future for Receiving {
-    type Output = Vec<u8>;
+    type Output = Result<Vec<u8>, VeqError>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        if self.dead.load(Ordering::Acquire) {
+            return Poll::Ready(Err(VeqError::Disconnected));
+        }
         match self.receiver.try_recv() {
-            Ok(data) => Poll::Ready(data),
+            Ok(data) => Poll::Ready(Ok(data)),
             Err(_) => {
                 if !self.added_waker {
                     let mut guard = self.wakers.lock().unwrap();

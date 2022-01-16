@@ -51,14 +51,14 @@ mod tests {
         let (mut conn1, mut conn2) = get_conns().await;
 
         let data = vec![0,1,2,3];
-        conn1.send(data.clone()).await;
+        conn1.send(data.clone()).await.unwrap();
         let received = conn2.recv().await;
-        assert_eq!(data, received);
+        assert_eq!(data, received.unwrap());
 
         let data2 = vec![5,6,7,8];
-        conn2.send(data2.clone()).await;
+        conn2.send(data2.clone()).await.unwrap();
         let received2 = conn1.recv().await;
-        assert_eq!(data2, received2);
+        assert_eq!(data2, received2.unwrap());
     }
 
     #[tokio::test]
@@ -67,11 +67,11 @@ mod tests {
         let data1 = vec![0,1,2,3];
         let data2 = vec![5,4,3,2];
         let data3 = vec![7,8,9,10];
-        conn1.send(data1.clone()).await;
-        conn1.send(data2.clone()).await;
-        conn1.send(data3.clone()).await;
-        assert_eq!(data1, conn2.recv().await);
-        assert_eq!(data2, conn2.recv().await);
-        assert_eq!(data3, conn2.recv().await);
+        conn1.send(data1.clone()).await.unwrap();
+        conn1.send(data2.clone()).await.unwrap();
+        conn1.send(data3.clone()).await.unwrap();
+        assert_eq!(data1, conn2.recv().await.unwrap());
+        assert_eq!(data2, conn2.recv().await.unwrap());
+        assert_eq!(data3, conn2.recv().await.unwrap());
     }
 }
