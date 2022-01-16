@@ -1,16 +1,15 @@
-use std::{io::Error, sync::Arc, net::SocketAddr, future::Future, pin::Pin, task::{Poll, Context}};
+use std::{io::Error, sync::Arc, net::SocketAddr, future::Future, pin::Pin, task::{Poll, Context}, collections::HashSet};
 
-use async_std::net::{ToSocketAddrs, UdpSocket};
 use serde::{Serialize, Deserialize};
 use snow::Keypair;
 use thiserror::Error;
-use tokio::{task::JoinHandle, sync::Mutex};
+use tokio::{task::JoinHandle, sync::Mutex, net::{UdpSocket, ToSocketAddrs}};
 
-use crate::{transport::{AddressedSender, AddressedReceiver}, snow_types::{SnowKeypair, SnowPublicKey}, handler::Handler, session::{Session, SessionId}};
+use crate::{transport::{AddressedSender, AddressedReceiver}, snow_types::{SnowKeypair, SnowPublicKey}, handler::Handler, session::{Session, SessionId}, ip_discovery::discover_ips};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ConnectionInfo {
-    pub addresses: Vec<SocketAddr>,
+    pub addresses: HashSet<SocketAddr>,
     pub public_key: SnowPublicKey,
 }
 
@@ -27,7 +26,7 @@ impl VeqSocket {
         let socket = Arc::new(UdpSocket::bind(addrs).await?);
         let keypair = SnowKeypair::new();
         let connection_info = ConnectionInfo {
-            addresses: vec![socket.local_addr()?],
+            addresses: discover_ips(&socket).await,
             public_key: keypair.public(),
         };
         let handler = Arc::new(Mutex::new(Handler::new()));
@@ -48,7 +47,7 @@ impl VeqSocket {
             loop {
                 let mut guard = handler_send.lock().await;
                 if let Some((dest, data)) = guard.try_next_outgoing().await {
-                    socket.send_to(&data[..], dest).await.unwrap();
+                    if let Ok(_) = socket.send_to(&data[..], dest).await {}
                 }
             }
         });

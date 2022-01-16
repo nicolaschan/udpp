@@ -11,8 +11,6 @@ use veq::veq::{VeqSocket, ConnectionInfo};
 struct Args {
     #[clap(long, default_value_t = 0)]
     port: u64,
-    #[clap(long)]
-    public_ip: Option<SocketAddr>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -27,9 +25,6 @@ async fn main() {
     let mut socket = VeqSocket::bind(format!("0.0.0.0:{}", args.port)).await.unwrap();
 
     let mut conn_info = socket.connection_info();
-    if let Some(ip) = args.public_ip {
-        conn_info.addresses.push(ip);
-    }
     let id = Uuid::from_u128(0);
     let connection_data = ConnectionData { id, conn_info };
     let conn_data_serialized = bincode::serialize(&connection_data).unwrap();

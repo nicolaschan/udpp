@@ -16,6 +16,7 @@ mod transport;
 mod handler;
 mod snow_types;
 mod session;
+mod ip_discovery;
 
 #[cfg(test)]
 mod tests {
@@ -42,7 +43,7 @@ mod tests {
         let port = 1337;
         let socket = VeqSocket::bind(format!("0.0.0.0:{}", port)).await.unwrap();
         let connection_info = socket.connection_info();
-        let bound_port = connection_info.addresses.get(0).unwrap().port();
+        let bound_port = connection_info.addresses.into_iter().next().unwrap().port();
         assert_eq!(port, bound_port);
     }
 
