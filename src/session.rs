@@ -47,6 +47,7 @@ impl PendingSessionInitiator {
             let mut interval = time::interval(Duration::from_millis(1000));
             loop {
                 interval.tick().await;
+                eprintln!("initiating...");
                 addresses.clone().into_iter().for_each(|addr| {
                     sender_clone.send((addr, SessionPacket::new(id, serialized_message.clone()))).unwrap();
                 });
@@ -97,6 +98,7 @@ impl PendingSessionResponder {
             let mut interval = time::interval(Duration::from_millis(1000));
             loop {
                 interval.tick().await;
+                eprintln!("responding...");
                 addresses.clone().into_iter().for_each(|addr| {
                     sender_clone.send((addr, SessionPacket::new(id, serialized_message.clone()))).unwrap();
                 });
@@ -159,6 +161,7 @@ impl Session {
             let serialized_message = bincode::serialize(&Message::Keepalive).unwrap();
             loop {
                 interval.tick().await;
+                eprintln!("heartbeat...");
                 sender_clone.send((remote_addr, SessionPacket::new(id, serialized_message.clone()))).unwrap();
                 if dead_clone.load(Ordering::Acquire) {
                     break;
