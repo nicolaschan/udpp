@@ -47,7 +47,6 @@ impl VeqSocket {
             loop {
                 let mut guard = handler_send.lock().await;
                 if let Some((dest, data)) = guard.try_next_outgoing().await {
-                    eprintln!("sending to {}", dest);
                     if let Ok(_) = socket.send_to(&data[..], dest).await {}
                 }
             }
