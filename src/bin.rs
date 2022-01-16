@@ -32,6 +32,7 @@ async fn main() {
     zstd::stream::copy_encode(&conn_data_serialized[..], &mut conn_data_compressed, 10).unwrap();
     let conn_data_emoji = base64::encode(&conn_data_compressed);
 
+    eprintln!("Your data: {:?}", connection_data);
     eprintln!("Your connection string:\n{}", conn_data_emoji);
     eprint!("Enter remote connection string: ");
     std::io::stdout().flush().unwrap();
