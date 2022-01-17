@@ -32,9 +32,9 @@ pub async fn public_v6(socket: &UdpSocket) -> HashSet<SocketAddr> {
         let client = StunClient::new(stun_addr_v4);
         if let Ok(addr) = client.query_external_address_async(&socket).await {
             ips.insert(addr);
-            // let mut ip_with_port = addr.clone();
-            // ip_with_port.set_port(socket.local_addr().unwrap().port());
-            // ips.insert(ip_with_port);
+            let mut ip_with_port = addr.clone();
+            ip_with_port.set_port(socket.local_addr().unwrap().port());
+            ips.insert(ip_with_port);
         }
     }
     ips

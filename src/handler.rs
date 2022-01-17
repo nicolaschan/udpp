@@ -6,7 +6,6 @@ use crate::{session::{Session, SessionPacket, SessionId, PendingSessionInitiator
 
 pub struct Handler {
     outgoing_sender: UnboundedSender<(SocketAddr, SessionPacket, u32)>,
-    outgoing_receiver: UnboundedReceiver<(SocketAddr, SessionPacket, u32)>,
     pending_sessions_poker: HashMap<SessionId, (PendingSessionPoker, Arc<std::sync::Mutex<Vec<Waker>>>)>,
     pending_sessions_initiator: HashMap<SessionId, (PendingSessionInitiator, Arc<std::sync::Mutex<Vec<Waker>>>)>,
     pending_sessions_responder: HashMap<SessionId, (PendingSessionResponder, Arc<std::sync::Mutex<Vec<Waker>>>)>,
@@ -16,18 +15,17 @@ pub struct Handler {
 }
 
 impl Handler {
-    pub fn new(keypair: SnowKeypair) -> Handler {
+    pub fn new(keypair: SnowKeypair) -> (Handler, UnboundedReceiver<(SocketAddr, SessionPacket, u32)>) {
         let (outgoing_sender, outgoing_receiver): (UnboundedSender<(SocketAddr, SessionPacket, u32)>, UnboundedReceiver<(SocketAddr, SessionPacket, u32)>) = unbounded_channel();
-        Handler {
+        (Handler {
             outgoing_sender,
-            outgoing_receiver,
             pending_sessions_poker: HashMap::new(),
             pending_sessions_initiator: HashMap::new(),
             pending_sessions_responder: HashMap::new(),
             established_sessions: HashMap::new(),
             alive_session_ids: Arc::new(std::sync::Mutex::new(HashSet::new())),
             keypair,
-        }
+        }, outgoing_receiver)
     }
     pub async fn handle_incoming(&mut self, src: SocketAddr, data: Vec<u8>) {
         let packet: SessionPacket = bincode::deserialize(&data[..]).unwrap();
@@ -108,11 +106,6 @@ impl Handler {
         }
     }
 
-    pub async fn try_next_outgoing(&mut self) -> Option<(SocketAddr, Vec<u8>, u32)> {
-        let (addr, packet, ttl) = self.outgoing_receiver.try_recv().ok()?;
-        let serialized = bincode::serialize(&packet).unwrap();
-        Some((addr, serialized, ttl))
-    }
     pub async fn initiate(&mut self, id: SessionId, info: ConnectionInfo) -> SessionReady {
         let initiator = SnowInitiator::new(&self.keypair, &info.public_key);
         let pending = PendingSessionInitiator::new(self.outgoing_sender.clone(), id, info, initiator).await;

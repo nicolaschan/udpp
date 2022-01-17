@@ -3,7 +3,7 @@ use std::{io::Error, sync::Arc, net::SocketAddr, future::Future, pin::Pin, task:
 use serde::{Serialize, Deserialize};
 use snow::Keypair;
 use thiserror::Error;
-use tokio::{task::JoinHandle, sync::Mutex, net::{UdpSocket, ToSocketAddrs}};
+use tokio::{task::JoinHandle, sync::{Mutex, mpsc::{UnboundedSender, UnboundedReceiver, unbounded_channel}}, net::{UdpSocket, ToSocketAddrs}};
 
 use crate::{transport::{AddressedSender, AddressedReceiver}, snow_types::{SnowKeypair, SnowPublicKey}, handler::Handler, session::{Session, SessionId}, ip_discovery::discover_ips};
 
@@ -28,7 +28,8 @@ impl VeqSocket {
             addresses: discover_ips(&socket).await,
             public_key: keypair.public(),
         };
-        let handler = Arc::new(Mutex::new(Handler::new(keypair)));
+        let (handler, mut outgoing_receiver) = Handler::new(keypair);
+        let handler = Arc::new(Mutex::new(handler));
 
         let receiver = socket.clone();
         let handler_recv = handler.clone();
@@ -44,10 +45,11 @@ impl VeqSocket {
         let handler_send = handler.clone();
         let sending_handle = tokio::spawn(async move {
             loop {
-                let mut guard = handler_send.lock().await;
-                if let Some((dest, data, ttl)) = guard.try_next_outgoing().await {
+                println!("shuffle");
+                if let Some((dest, packet, ttl)) = outgoing_receiver.recv().await {
+                    let serialized = bincode::serialize(&packet).unwrap();
                     socket.set_ttl(ttl).unwrap();
-                    if let Ok(_) = socket.send_to(&data[..], dest).await {}
+                    if let Ok(_) = socket.send_to(&serialized[..], dest).await {}
                 }
             }
         });
