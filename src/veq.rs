@@ -15,7 +15,6 @@ pub struct ConnectionInfo {
 
 pub struct VeqSocket {
     connection_info: ConnectionInfo,
-    keypair: SnowKeypair,
     handler: Arc<Mutex<Handler>>,
     receiving_handle: JoinHandle<()>,
     sending_handle: JoinHandle<()>,
@@ -29,7 +28,7 @@ impl VeqSocket {
             addresses: discover_ips(&socket).await,
             public_key: keypair.public(),
         };
-        let handler = Arc::new(Mutex::new(Handler::new()));
+        let handler = Arc::new(Mutex::new(Handler::new(keypair)));
 
         let receiver = socket.clone();
         let handler_recv = handler.clone();
@@ -54,7 +53,6 @@ impl VeqSocket {
         });
         Ok(VeqSocket {
             connection_info,
-            keypair,
             handler,
             receiving_handle,
             sending_handle,

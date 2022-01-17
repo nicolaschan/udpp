@@ -62,7 +62,6 @@ mod tests {
     async fn test_ifs() {
         let socket = UdpSocket::bind("0.0.0.0:0").await.unwrap();
         let ips = discover_ips(&socket).await;
-        println!("{:?}", ips);
         assert!(ips.contains(&socket.local_addr().unwrap()));
     }
 }
