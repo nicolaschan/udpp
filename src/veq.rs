@@ -46,7 +46,8 @@ impl VeqSocket {
         let sending_handle = tokio::spawn(async move {
             loop {
                 let mut guard = handler_send.lock().await;
-                if let Some((dest, data)) = guard.try_next_outgoing().await {
+                if let Some((dest, data, ttl)) = guard.try_next_outgoing().await {
+                    socket.set_ttl(ttl).unwrap();
                     if let Ok(_) = socket.send_to(&data[..], dest).await {}
                 }
             }

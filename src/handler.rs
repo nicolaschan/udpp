@@ -5,8 +5,8 @@ use tokio::sync::{mpsc::{Receiver, Sender, channel, unbounded_channel, Unbounded
 use crate::{session::{Session, SessionPacket, SessionId, PendingSessionInitiator, PendingSessionResponder, Receiving}, veq::{ConnectionInfo, VeqError}, snow_types::SnowPublicKey};
 
 pub struct Handler {
-    outgoing_sender: UnboundedSender<(SocketAddr, SessionPacket)>,
-    outgoing_receiver: UnboundedReceiver<(SocketAddr, SessionPacket)>,
+    outgoing_sender: UnboundedSender<(SocketAddr, SessionPacket, u32)>,
+    outgoing_receiver: UnboundedReceiver<(SocketAddr, SessionPacket, u32)>,
     pending_sessions_initiator: HashMap<SessionId, (PendingSessionInitiator, Arc<std::sync::Mutex<Vec<Waker>>>)>,
     pending_sessions_responder: HashMap<SessionId, (PendingSessionResponder, Arc<std::sync::Mutex<Vec<Waker>>>)>,
     established_sessions: HashMap<SessionId, Session>,
@@ -15,7 +15,7 @@ pub struct Handler {
 
 impl Handler {
     pub fn new() -> Handler {
-        let (outgoing_sender, outgoing_receiver): (UnboundedSender<(SocketAddr, SessionPacket)>, UnboundedReceiver<(SocketAddr, SessionPacket)>) = unbounded_channel();
+        let (outgoing_sender, outgoing_receiver): (UnboundedSender<(SocketAddr, SessionPacket, u32)>, UnboundedReceiver<(SocketAddr, SessionPacket, u32)>) = unbounded_channel();
         Handler {
             outgoing_sender,
             outgoing_receiver,
@@ -83,10 +83,10 @@ impl Handler {
         }
     }
 
-    pub async fn try_next_outgoing(&mut self) -> Option<(SocketAddr, Vec<u8>)> {
-        let (addr, packet) = self.outgoing_receiver.try_recv().ok()?;
+    pub async fn try_next_outgoing(&mut self) -> Option<(SocketAddr, Vec<u8>, u32)> {
+        let (addr, packet, ttl) = self.outgoing_receiver.try_recv().ok()?;
         let serialized = bincode::serialize(&packet).unwrap();
-        Some((addr, serialized))
+        Some((addr, serialized, ttl))
     }
     pub async fn initiate(&mut self, id: SessionId, info: ConnectionInfo) -> SessionReady {
         let pending = PendingSessionInitiator::new(self.outgoing_sender.clone(), id, info).await;

@@ -35,11 +35,11 @@ pub struct PendingSessionInitiator {
     working_remote_addr: Option<SocketAddr>,
     waker: Arc<Mutex<Option<Waker>>>,
     id: SessionId,
-    sender: UnboundedSender<(SocketAddr, SessionPacket)>,
+    sender: UnboundedSender<(SocketAddr, SessionPacket, u32)>,
 }
 
 impl PendingSessionInitiator {
-    pub async fn new(sender: UnboundedSender<(SocketAddr, SessionPacket)>, id: SessionId, conn_info: ConnectionInfo) -> PendingSessionInitiator {
+    pub async fn new(sender: UnboundedSender<(SocketAddr, SessionPacket, u32)>, id: SessionId, conn_info: ConnectionInfo) -> PendingSessionInitiator {
         let addresses = conn_info.addresses.clone();
         let sender_clone = sender.clone();
         let handle = tokio::spawn(async move {
@@ -48,7 +48,8 @@ impl PendingSessionInitiator {
                 interval.tick().await;
                 let serialized_message = bincode::serialize(&Message::HandshakeInitiation(Uuid::new_v4())).unwrap();
                 addresses.clone().into_iter().for_each(|addr| {
-                    sender_clone.send((addr, SessionPacket::new(id, serialized_message.clone()))).unwrap();
+                    let ttl = 64;
+                    sender_clone.send((addr, SessionPacket::new(id, serialized_message.clone()), ttl)).unwrap();
                 });
             }
         });
@@ -85,11 +86,11 @@ pub struct PendingSessionResponder {
     working_remote_addr: Option<SocketAddr>,
     waker: Arc<Mutex<Option<Waker>>>,
     id: SessionId,
-    sender: UnboundedSender<(SocketAddr, SessionPacket)>,
+    sender: UnboundedSender<(SocketAddr, SessionPacket, u32)>,
 }
 
 impl PendingSessionResponder {
-    pub async fn new(sender: UnboundedSender<(SocketAddr, SessionPacket)>, id: SessionId, conn_info: ConnectionInfo) -> PendingSessionResponder {
+    pub async fn new(sender: UnboundedSender<(SocketAddr, SessionPacket, u32)>, id: SessionId, conn_info: ConnectionInfo) -> PendingSessionResponder {
         let addresses = conn_info.addresses.clone();
         let sender_clone = sender.clone();
         let handle = tokio::spawn(async move {
@@ -98,7 +99,7 @@ impl PendingSessionResponder {
                 interval.tick().await;
                 let serialized_message = bincode::serialize(&Message::HandshakeResponse(Uuid::new_v4())).unwrap();
                 addresses.clone().into_iter().for_each(|addr| {
-                    sender_clone.send((addr, SessionPacket::new(id, serialized_message.clone()))).unwrap();
+                    sender_clone.send((addr, SessionPacket::new(id, serialized_message.clone()), 64)).unwrap();
                 });
             }
         });
@@ -134,7 +135,7 @@ impl PendingSessionResponder {
 pub struct Session {
     id: SessionId,
     pub remote_addr: SocketAddr,
-    sender: UnboundedSender<(SocketAddr, SessionPacket)>,
+    sender: UnboundedSender<(SocketAddr, SessionPacket, u32)>,
     messages_sender: Sender<Vec<u8>>,
     messages_receiver: Receiver<Vec<u8>>,
     wakers: Arc<Mutex<VecDeque<Waker>>>,
@@ -145,7 +146,7 @@ pub struct Session {
 }
 
 impl Session {
-    fn new(id: SessionId, remote_addr: SocketAddr, sender: UnboundedSender<(SocketAddr, SessionPacket)>) -> Session {
+    fn new(id: SessionId, remote_addr: SocketAddr, sender: UnboundedSender<(SocketAddr, SessionPacket, u32)>) -> Session {
         let (messages_sender, messages_receiver) = unbounded();
         let wakers = Arc::new(Mutex::new(VecDeque::new()));
 
@@ -159,7 +160,7 @@ impl Session {
             let serialized_message = bincode::serialize(&Message::Keepalive).unwrap();
             loop {
                 interval.tick().await;
-                sender_clone.send((remote_addr, SessionPacket::new(id, serialized_message.clone()))).unwrap();
+                sender_clone.send((remote_addr, SessionPacket::new(id, serialized_message.clone()), 64)).unwrap();
                 if dead_clone.load(Ordering::Acquire) {
                     break;
                 }
@@ -206,7 +207,7 @@ impl Session {
         let message = Message::Data(data);
         let serialized = bincode::serialize(&message).unwrap();
         let packet = SessionPacket::new(self.id, serialized);
-        self.sender.send((self.remote_addr, packet)).unwrap();
+        self.sender.send((self.remote_addr, packet, 64)).unwrap();
         return true;
     }
     pub fn recv(&mut self) -> Receiving {
