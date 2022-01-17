@@ -45,7 +45,6 @@ impl VeqSocket {
         let handler_send = handler.clone();
         let sending_handle = tokio::spawn(async move {
             loop {
-                println!("shuffle");
                 if let Some((dest, packet, ttl)) = outgoing_receiver.recv().await {
                     let serialized = bincode::serialize(&packet).unwrap();
                     socket.set_ttl(ttl).unwrap();
