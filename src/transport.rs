@@ -1,6 +1,6 @@
 use std::{net::SocketAddr, sync::Arc};
 
-use async_std::{channel::Sender, sync::Mutex, net::UdpSocket};
+use async_std::{channel::{Sender, Receiver}, sync::Mutex, net::UdpSocket};
 use async_trait::async_trait;
 
 #[async_trait]
@@ -33,6 +33,13 @@ impl AddressedSender for Arc<UdpSocket> {
 #[async_trait]
 pub trait AddressedReceiver {
     async fn recv(&self) -> (SocketAddr, Vec<u8>);
+}
+
+#[async_trait]
+impl AddressedReceiver for Receiver<(SocketAddr, Vec<u8>)> {
+    async fn recv(&self) -> (SocketAddr, Vec<u8>) {
+        self.recv().await.unwrap()
+    }
 }
 
 #[async_trait]

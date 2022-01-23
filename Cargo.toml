@@ -30,5 +30,6 @@ snow = "0.8.0"
 stunclient = "0.3.1"
 thiserror = "1.0"
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "time", "test-util"] }
+tokio-stream = "0.1.8"
 uuid = { version = "0.8", features = ["serde", "v4"] }
 zstd = "0.9.2+zstd.1.5.1"

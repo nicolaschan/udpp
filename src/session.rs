@@ -147,7 +147,6 @@ impl PendingSessionInitiator {
 
     pub async fn to_session(self) -> Option<Session> {
         if let Some((remote_addr, response)) = self.working_remote_addr {
-            println!("initiator to_session");
             self.handle.abort();
             let transport = self.initiator.receive_response(response);
             return Some(Session::new(self.id, remote_addr, self.sender.clone(), transport));

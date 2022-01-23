@@ -17,15 +17,16 @@ mod handler;
 mod snow_types;
 mod session;
 mod ip_discovery;
+mod transform;
 
 #[cfg(test)]
 mod tests {
     use tokio::join;
     use uuid::Uuid;
 
-    use crate::{veq::{VeqSocket, VeqSession}};
+    use crate::{veq::{VeqSocket, VeqSession, BidirectionalSession, VeqSessionAlias}, transform::Chunker};
 
-    async fn get_conns() -> (VeqSession, VeqSession) {
+    async fn get_conns() -> (VeqSessionAlias, VeqSessionAlias) {
         let mut socket1 = VeqSocket::bind("0.0.0.0:0").await.unwrap();
         let mut socket2 = VeqSocket::bind("0.0.0.0:0").await.unwrap();
 
@@ -62,17 +63,25 @@ mod tests {
         assert_eq!(data2, received2.unwrap());
     }
 
-    // #[tokio::test]
-    // async fn test_queued_small() {
-    //     let (mut conn1, mut conn2) = get_conns().await;
-    //     let data1 = vec![0,1,2,3];
-    //     let data2 = vec![5,4,3,2];
-    //     let data3 = vec![7,8,9,10];
-    //     conn1.send(data1.clone()).await.unwrap();
-    //     conn1.send(data2.clone()).await.unwrap();
-    //     conn1.send(data3.clone()).await.unwrap();
-    //     assert_eq!(data1, conn2.recv().await.unwrap());
-    //     assert_eq!(data2, conn2.recv().await.unwrap());
-    //     assert_eq!(data3, conn2.recv().await.unwrap());
-    // }
+    #[tokio::test]
+    async fn test_queued_small() {
+        let (mut conn1, mut conn2) = get_conns().await;
+        let data1 = vec![0,1,2,3];
+        let data2 = vec![5,4,3,2];
+        let data3 = vec![7,8,9,10];
+        conn1.send(data1.clone()).await.unwrap();
+        conn1.send(data2.clone()).await.unwrap();
+        conn1.send(data3.clone()).await.unwrap();
+        assert_eq!(data1, conn2.recv().await.unwrap());
+        assert_eq!(data2, conn2.recv().await.unwrap());
+        assert_eq!(data3, conn2.recv().await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_large_payload() {
+        let (mut conn1, mut conn2) = get_conns().await;
+        let data: Vec<u8> = (1..655350).into_iter().map(|n: usize| (n % 256) as u8).collect();
+        conn1.send(data.clone()).await.unwrap();
+        assert_eq!(data, conn2.recv().await.unwrap());
+    }
 }
