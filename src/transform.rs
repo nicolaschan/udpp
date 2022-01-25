@@ -128,6 +128,7 @@ impl<T: Bidirectional + Send> Bidirectional for Chunker<T> {
             .collect();
         
         for d in data {
+            println!("sending chunk");
             self.delegate.send(d).await?;
         }
         Ok(())
