@@ -1,12 +1,12 @@
-use std::{future::Future, pin::Pin, task::{Context, Poll, Waker}, net::SocketAddr, time::Duration, sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}}, collections::VecDeque};
+use std::{future::Future, pin::Pin, task::{Context, Poll, Waker}, net::SocketAddr, time::Duration, sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}}, collections::{VecDeque, HashSet}};
 
 use crossbeam::channel::{Receiver, Sender, unbounded};
 use serde::{Deserialize, Serialize};
-use snow::TransportState;
+use snow::{TransportState, StatelessTransportState};
 use tokio::{task::JoinHandle, sync::mpsc::{UnboundedSender, UnboundedReceiver, unbounded_channel}, time};
 use uuid::Uuid;
 
-use crate::{veq::{ConnectionInfo, VeqError}, snow_types::{SnowKeypair, SnowInitiator, SnowInitiation, SnowResponse, SnowResponder}};
+use crate::{veq::{ConnectionInfo, VeqError}, snow_types::{SnowKeypair, SnowInitiator, SnowInitiation, SnowResponse, SnowResponder, LossyTransportState}};
 
 pub type SessionId = Uuid;
 
@@ -27,7 +27,7 @@ pub enum RawMessage {
     HandshakePoke,
     HandshakeInitiation(SnowInitiation),
     HandshakeResponse(SnowResponse),
-    Encrypted(Vec<u8>),
+    Encrypted(u64, Vec<u8>),
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -161,12 +161,12 @@ pub struct PendingSessionResponder {
     waker: Arc<Mutex<Option<Waker>>>,
     id: SessionId,
     sender: UnboundedSender<(SocketAddr, SessionPacket, u32)>,
-    transport: TransportState,
+    transport: LossyTransportState,
     ready: bool,
 }
 
 impl PendingSessionResponder {
-    pub async fn new(sender: UnboundedSender<(SocketAddr, SessionPacket, u32)>, id: SessionId, remote_addr: SocketAddr, transport: TransportState, response: SnowResponse) -> PendingSessionResponder {
+    pub async fn new(sender: UnboundedSender<(SocketAddr, SessionPacket, u32)>, id: SessionId, remote_addr: SocketAddr, transport: LossyTransportState, response: SnowResponse) -> PendingSessionResponder {
         let sender_clone = sender.clone();
         let handle = tokio::spawn(async move {
             let mut interval = time::interval(Duration::from_millis(1000));
@@ -188,9 +188,9 @@ impl PendingSessionResponder {
     }
 
     pub async fn handle_incoming(&mut self, src: SocketAddr, packet: &SessionPacket) {
-        if let Ok(RawMessage::Encrypted(encrypted)) = bincode::deserialize::<RawMessage>(&packet.data) {
+        if let Ok(RawMessage::Encrypted(nonce, encrypted)) = bincode::deserialize::<RawMessage>(&packet.data) {
             let mut decrypted = [0u8; 65535];
-            if let Ok(len) = self.transport.read_message(&encrypted, &mut decrypted) {
+            if let Ok(len) = self.transport.read_message(nonce, &encrypted, &mut decrypted).await {
                 if let Ok(Message::Keepalive) = bincode::deserialize(&decrypted[..len]) {
                     self.ready = true;
                     let mut guard = self.waker.lock().unwrap();
@@ -227,11 +227,12 @@ pub struct Session {
     death_handle: JoinHandle<()>,
     heartbeat: Arc<AtomicBool>,
     dead: Arc<AtomicBool>,
-    transport: Arc<tokio::sync::Mutex<TransportState>>,
+    transport: Arc<tokio::sync::Mutex<LossyTransportState>>,
+    received_nonces: Arc<Mutex<HashSet<u64>>>,
 }
 
 impl Session {
-    fn new(id: SessionId, remote_addr: SocketAddr, sender: UnboundedSender<(SocketAddr, SessionPacket, u32)>, transport: TransportState) -> Session {
+    fn new(id: SessionId, remote_addr: SocketAddr, sender: UnboundedSender<(SocketAddr, SessionPacket, u32)>, transport: LossyTransportState) -> Session {
         let (messages_sender, messages_receiver) = unbounded();
         let wakers = Arc::new(Mutex::new(VecDeque::new()));
         let transport = Arc::new(tokio::sync::Mutex::new(transport));
@@ -249,8 +250,8 @@ impl Session {
                 interval.tick().await;
                 let mut encrypted = [0u8; 65535];
                 let mut guard = transport_clone.lock().await;
-                let len = guard.write_message(&keepalive_serialized, &mut encrypted).unwrap(); 
-                let serialized_message = bincode::serialize(&RawMessage::Encrypted(encrypted[..len].to_vec())).unwrap();
+                let len = guard.write_message(&keepalive_serialized, &mut encrypted).await.unwrap(); 
+                let serialized_message = bincode::serialize(&RawMessage::Encrypted(420, encrypted[..len].to_vec())).unwrap();
                 sender_clone.send((remote_addr, SessionPacket::new(id, serialized_message.clone()), 64)).unwrap();
                 if dead_clone.load(Ordering::Acquire) {
                     break;
@@ -275,7 +276,18 @@ impl Session {
             }
         });
         Session {
-            id, remote_addr, sender, messages_sender, messages_receiver, wakers, handle, death_handle, heartbeat, dead, transport,
+            id, 
+            remote_addr, 
+            sender, 
+            messages_sender, 
+            messages_receiver, 
+            wakers, 
+            handle, 
+            death_handle, 
+            heartbeat, 
+            dead, 
+            transport,
+            received_nonces: Arc::new(Mutex::new(HashSet::new()))
         }
     }
     pub async fn handle_incoming(&mut self, packet: SessionPacket) {
@@ -284,10 +296,10 @@ impl Session {
             RawMessage::HandshakePoke => {},
             RawMessage::HandshakeInitiation(_) => {},
             RawMessage::HandshakeResponse(_) => {},
-            RawMessage::Encrypted(encrypted) => {
+            RawMessage::Encrypted(nonce, encrypted) => {
                 let mut data = [0u8; 65535];
                 let mut guard = self.transport.lock().await;
-                if let Ok(len) = guard.read_message(&encrypted, &mut data) {
+                if let Ok(len) = guard.read_message(nonce, &encrypted, &mut data).await {
                     if let Ok(message) = bincode::deserialize::<Message>(&data[..len]) {
                         match message {
                             Message::Keepalive => {},
@@ -309,8 +321,8 @@ impl Session {
         let serialized_message = bincode::serialize(&Message::Payload(data)).unwrap();
         let mut encrypted = [0u8; 65535];
         let mut guard = self.transport.lock().await;
-        if let Ok(len) = guard.write_message(&serialized_message, &mut encrypted) {
-            let message = RawMessage::Encrypted(encrypted[..len].to_vec());
+        if let Ok(len) = guard.write_message(&serialized_message, &mut encrypted).await {
+            let message = RawMessage::Encrypted(420, encrypted[..len].to_vec());
             let serialized = bincode::serialize(&message).unwrap();
             let packet = SessionPacket::new(self.id, serialized);
             self.sender.send((self.remote_addr, packet, 64)).unwrap();
