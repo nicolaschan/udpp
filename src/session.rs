@@ -27,7 +27,7 @@ pub enum RawMessage {
     HandshakePoke,
     HandshakeInitiation(SnowInitiation),
     HandshakeResponse(SnowResponse),
-    Encrypted(u64, Vec<u8>),
+    Encrypted(Vec<u8>),
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -188,9 +188,9 @@ impl PendingSessionResponder {
     }
 
     pub async fn handle_incoming(&mut self, src: SocketAddr, packet: &SessionPacket) {
-        if let Ok(RawMessage::Encrypted(nonce, encrypted)) = bincode::deserialize::<RawMessage>(&packet.data) {
+        if let Ok(RawMessage::Encrypted(encrypted)) = bincode::deserialize::<RawMessage>(&packet.data) {
             let mut decrypted = [0u8; 65535];
-            if let Ok(len) = self.transport.read_message(nonce, &encrypted, &mut decrypted).await {
+            if let Ok(len) = self.transport.read_message(&encrypted, &mut decrypted).await {
                 if let Ok(Message::Keepalive) = bincode::deserialize(&decrypted[..len]) {
                     self.ready = true;
                     let mut guard = self.waker.lock().unwrap();
@@ -251,7 +251,7 @@ impl Session {
                 let mut encrypted = [0u8; 65535];
                 let mut guard = transport_clone.lock().await;
                 let len = guard.write_message(&keepalive_serialized, &mut encrypted).await.unwrap(); 
-                let serialized_message = bincode::serialize(&RawMessage::Encrypted(420, encrypted[..len].to_vec())).unwrap();
+                let serialized_message = bincode::serialize(&RawMessage::Encrypted(encrypted[..len].to_vec())).unwrap();
                 sender_clone.send((remote_addr, SessionPacket::new(id, serialized_message.clone()), 64)).unwrap();
                 if dead_clone.load(Ordering::Acquire) {
                     break;
@@ -296,10 +296,10 @@ impl Session {
             RawMessage::HandshakePoke => {},
             RawMessage::HandshakeInitiation(_) => {},
             RawMessage::HandshakeResponse(_) => {},
-            RawMessage::Encrypted(nonce, encrypted) => {
+            RawMessage::Encrypted(encrypted) => {
                 let mut data = [0u8; 65535];
                 let mut guard = self.transport.lock().await;
-                if let Ok(len) = guard.read_message(nonce, &encrypted, &mut data).await {
+                if let Ok(len) = guard.read_message(&encrypted, &mut data).await {
                     if let Ok(message) = bincode::deserialize::<Message>(&data[..len]) {
                         match message {
                             Message::Keepalive => {},
@@ -322,7 +322,7 @@ impl Session {
         let mut encrypted = [0u8; 65535];
         let mut guard = self.transport.lock().await;
         if let Ok(len) = guard.write_message(&serialized_message, &mut encrypted).await {
-            let message = RawMessage::Encrypted(420, encrypted[..len].to_vec());
+            let message = RawMessage::Encrypted(encrypted[..len].to_vec());
             let serialized = bincode::serialize(&message).unwrap();
             let packet = SessionPacket::new(self.id, serialized);
             self.sender.send((self.remote_addr, packet, 64)).unwrap();
