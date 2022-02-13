@@ -299,18 +299,28 @@ impl Session {
             RawMessage::Encrypted(encrypted) => {
                 let mut data = [0u8; 65535];
                 let mut guard = self.transport.lock().await;
-                if let Ok(len) = guard.read_message(&encrypted, &mut data).await {
-                    if let Ok(message) = bincode::deserialize::<Message>(&data[..len]) {
-                        match message {
-                            Message::Keepalive => {},
-                            Message::Payload(data) => {
-                                self.messages_sender.send(data).unwrap();
-                                let mut wakers_guard = self.wakers.lock().unwrap();
-                                wakers_guard.pop_front().map(|w| w.wake_by_ref());
-                            },
-                        }
+                let len = guard.read_message(&encrypted, &mut data).await.unwrap();
+                let message = bincode::deserialize::<Message>(&data[..len]).unwrap();
+                match message {
+                    Message::Keepalive => {},
+                    Message::Payload(data) => {
+                        self.messages_sender.send(data).unwrap();
+                        let mut wakers_guard = self.wakers.lock().unwrap();
+                        wakers_guard.pop_front().map(|w| w.wake_by_ref());
                     }
                 }
+                // if let Ok(len) = guard.read_message(&encrypted, &mut data).await {
+                //     if let Ok(message) = bincode::deserialize::<Message>(&data[..len]) {
+                //         match message {
+                //             Message::Keepalive => {},
+                //             Message::Payload(data) => {
+                //                 self.messages_sender.send(data).unwrap();
+                //                 let mut wakers_guard = self.wakers.lock().unwrap();
+                //                 wakers_guard.pop_front().map(|w| w.wake_by_ref());
+                //             },
+                //         }
+                //     }
+                // }
             },
         };
     }

@@ -55,7 +55,6 @@ impl LossyTransportState {
 
         let mut guard = self.received_nonces.lock().await;
         if guard.contains(&nonce) || guard.first().map(|f| f > &nonce).unwrap_or(false) {
-            println!("i don't like that nonce. my btreemap is {:?} and the bad nonce is {:?}", guard, nonce);
             return Err(snow::Error::Decrypt);
         }
         guard.insert(nonce);
