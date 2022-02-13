@@ -67,6 +67,7 @@ impl Handler {
             return;
         }
         if let Some(session) = self.established_sessions.get_mut(&packet.id) {
+            println!("handler.rs:70 passing packet on to session");
             session.handle_incoming(packet).await;
         }
     }

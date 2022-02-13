@@ -14,13 +14,15 @@ pub trait Bidirectional {
 }
 
 #[async_trait]
-impl Bidirectional for VecDeque<Vec<u8>> {
+impl Bidirectional for Arc<Mutex<VecDeque<Vec<u8>>>> {
     async fn send(&mut self, data: Vec<u8>) -> Result<(), VeqError> {
-        self.push_back(data);
+        let mut guard = self.lock().await;
+        guard.push_back(data);
         Ok(())
     }
     async fn recv(&mut self) -> Result<Vec<u8>, VeqError> {
-        Ok(self.pop_front().unwrap())
+        let mut guard = self.lock().await;
+        Ok(guard.pop_front().unwrap())
     }
 }
 
@@ -135,16 +137,19 @@ impl<T: Bidirectional + Send> Bidirectional for Chunker<T> {
 
     async fn recv(&mut self) -> Result<Vec<u8>, VeqError> {
         loop {
+            println!("transform.rs:140");
             match self.next_ready_chunk().await {
                 Some(ready) => {
                     println!("received a complete chunk");
                     return Ok(ready);
                 },
                 None => {
+                    println!("transform.rs:147");
                     let bytes = self.delegate.recv().await.unwrap();
                     println!("received a chunk piece");
                     let chunked_data: ChunkedData = bincode::deserialize(&bytes).unwrap();
                     self.add_chunk(chunked_data).await;
+                    println!("transform.rs:152");
                 },
             };
         }
@@ -165,10 +170,27 @@ mod tests {
 
     #[tokio::test]
     async fn test_send_recv() {
-        let delegate: VecDeque<Vec<u8>> = VecDeque::new();
+        let delegate: Arc<Mutex<VecDeque<Vec<u8>>>> = Arc::new(Mutex::new(VecDeque::new()));
         let mut chunker = Chunker::new(delegate, 3);
 
         let data = vec![1,2,3,4,5,6,7,8];
+        chunker.send(data.clone()).await.unwrap();
+        let received = chunker.recv().await.unwrap();
+        assert_eq!(data, received);
+    }
+
+    #[tokio::test]
+    async fn test_send_recv_lossy() {
+        let mut delegate: Arc<Mutex<VecDeque<Vec<u8>>>> = Arc::new(Mutex::new(VecDeque::new()));
+        let mut chunker = Chunker::new(delegate.clone(), 3);
+
+        let data = vec![1,2,3,4,5,6,7,8];
+        chunker.send(data.clone()).await.unwrap();
+
+        // Steal the [1,2,3]
+        delegate.recv().await;
+
+        let data = vec![9,10,11,12,13,14,15,16];
         chunker.send(data.clone()).await.unwrap();
         let received = chunker.recv().await.unwrap();
         assert_eq!(data, received);

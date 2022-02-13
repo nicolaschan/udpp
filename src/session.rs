@@ -306,6 +306,7 @@ impl Session {
                         println!("received a keepalive");
                     },
                     Message::Payload(data) => {
+                        println!("session.rs:309 received data payload of length {}", data.len());
                         self.messages_sender.send(data).unwrap();
                         let mut wakers_guard = self.wakers.lock().unwrap();
                         wakers_guard.pop_front().map(|w| w.wake_by_ref());
@@ -370,7 +371,10 @@ impl Future for Receiving {
             return Poll::Ready(Err(VeqError::Disconnected));
         }
         match self.receiver.try_recv() {
-            Ok(data) => Poll::Ready(Ok(data)),
+            Ok(data) => {
+                println!("session.rs:375 hit");
+                return Poll::Ready(Ok(data));
+            },
             Err(_) => {
                 if !self.added_waker {
                     let mut guard = self.wakers.lock().unwrap();
