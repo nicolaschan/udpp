@@ -303,13 +303,10 @@ impl Session {
                 let len = guard.read_message(&encrypted, &mut data).await.unwrap();
                 let message = bincode::deserialize::<Message>(&data[..len]).unwrap();
                 match message {
-                    Message::Keepalive => {
-                        println!("received a keepalive");
-                    },
+                    Message::Keepalive => {},
                     Message::Payload(data) => {
                         self.messages_sender.send(data).unwrap();
                         let mut wakers_guard = self.wakers.lock().unwrap();
-                        println!("wakers: {:?}", wakers_guard);
                         wakers_guard.pop_first().map(|(_uuid, w)| w.wake_by_ref());
                     }
                 }
@@ -373,10 +370,8 @@ impl Future for Receiving {
         if self.dead.load(Ordering::Acquire) {
             return Poll::Ready(Err(VeqError::Disconnected));
         }
-        println!("session.rs:376 polled id is {:?}", self.id);
         match self.receiver.try_recv() {
             Ok(data) => {
-                println!("session.rs:379 hit");
                 let mut guard = self.wakers.lock().unwrap();
                 guard.remove(&self.id);
                 return Poll::Ready(Ok(data));

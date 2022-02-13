@@ -38,7 +38,6 @@ impl VeqSocket {
             loop {
                 let mut buf: [u8; 65536] = [0u8; 65536];
                 let (len, src) = receiver.recv_from(&mut buf).await.unwrap();
-                println!("received raw packet of length {}", len);
                 let mut guard = handler_recv.lock().await;
                 guard.handle_incoming(src, buf[..len].to_vec()).await;
             }
