@@ -149,7 +149,7 @@ impl<T: Bidirectional + Send> Bidirectional for Chunker<T> {
                     println!("received a chunk piece");
                     let chunked_data: ChunkedData = bincode::deserialize(&bytes).unwrap();
                     self.add_chunk(chunked_data).await;
-                    println!("received a chunk piece");
+                    println!("added a chunk piece");
                 },
             };
         }
