@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use snow::{TransportState, StatelessTransportState};
 use tokio::{task::JoinHandle, sync::mpsc::{UnboundedSender, UnboundedReceiver, unbounded_channel}, time};
 use uuid::Uuid;
+use std::collections::BTreeMap;
 
 use crate::{veq::{ConnectionInfo, VeqError}, snow_types::{SnowKeypair, SnowInitiator, SnowInitiation, SnowResponse, SnowResponder, LossyTransportState}};
 
@@ -222,7 +223,7 @@ pub struct Session {
     sender: UnboundedSender<(SocketAddr, SessionPacket, u32)>,
     messages_sender: Sender<Vec<u8>>,
     messages_receiver: Receiver<Vec<u8>>,
-    wakers: Arc<Mutex<VecDeque<Waker>>>,
+    wakers: Arc<Mutex<BTreeMap<Uuid, Waker>>>,
     handle: JoinHandle<()>,
     death_handle: JoinHandle<()>,
     heartbeat: Arc<AtomicBool>,
@@ -234,7 +235,7 @@ pub struct Session {
 impl Session {
     fn new(id: SessionId, remote_addr: SocketAddr, sender: UnboundedSender<(SocketAddr, SessionPacket, u32)>, transport: LossyTransportState) -> Session {
         let (messages_sender, messages_receiver) = unbounded();
-        let wakers = Arc::new(Mutex::new(VecDeque::new()));
+        let wakers = Arc::new(Mutex::new(BTreeMap::new()));
         let transport = Arc::new(tokio::sync::Mutex::new(transport));
 
         let heartbeat = Arc::new(AtomicBool::new(true));
@@ -269,7 +270,7 @@ impl Session {
                 if !heartbeat_clone.load(Ordering::Acquire) {
                     dead_clone.store(true, Ordering::Release);
                     let guard = wakers_clone.lock().unwrap();
-                    guard.clone().into_iter().for_each(|w: Waker| w.wake_by_ref());
+                    guard.clone().values().into_iter().for_each(|w: &Waker| w.wake_by_ref());
                     break;
                 }
                 heartbeat_clone.store(false, Ordering::Release);
@@ -309,7 +310,7 @@ impl Session {
                         println!("session.rs:309 received data payload of length {}", data.len());
                         self.messages_sender.send(data).unwrap();
                         let mut wakers_guard = self.wakers.lock().unwrap();
-                        wakers_guard.pop_front().map(|w| w.wake_by_ref());
+                        wakers_guard.first_entry().map(|w| w.get().wake_by_ref());
                     }
                 }
                 // if let Ok(len) = guard.read_message(&encrypted, &mut data).await {
@@ -351,15 +352,17 @@ impl Session {
 }
 
 pub struct Receiving {
-    wakers: Arc<Mutex<VecDeque<Waker>>>,
+    wakers: Arc<Mutex<BTreeMap<Uuid, Waker>>>,
     receiver: Receiver<Vec<u8>>,
     dead: Arc<AtomicBool>,
     added_waker: bool,
+    id: Uuid,
 }
 
 impl Receiving {
-    pub fn new(wakers: Arc<Mutex<VecDeque<Waker>>>, receiver: Receiver<Vec<u8>>, dead: Arc<AtomicBool>) -> Receiving {
-        Receiving { wakers, receiver, dead, added_waker: false }     
+    pub fn new(wakers: Arc<Mutex<BTreeMap<Uuid, Waker>>>, receiver: Receiver<Vec<u8>>, dead: Arc<AtomicBool>) -> Receiving {
+        let id = Uuid::new_v4();
+        Receiving { wakers, receiver, dead, added_waker: false, id }     
     }
 }
 
@@ -370,16 +373,17 @@ impl Future for Receiving {
         if self.dead.load(Ordering::Acquire) {
             return Poll::Ready(Err(VeqError::Disconnected));
         }
+        println!("session:376 polled id is {:?}", self.id);
         match self.receiver.try_recv() {
             Ok(data) => {
-                println!("session.rs:375 hit");
+                println!("session.rs:379 hit");
+                let mut guard = self.wakers.lock().unwrap();
+                guard.remove(&self.id);
                 return Poll::Ready(Ok(data));
             },
             Err(_) => {
-                if !self.added_waker {
-                    let mut guard = self.wakers.lock().unwrap();
-                    guard.push_back(cx.waker().to_owned());
-                }
+                let mut guard = self.wakers.lock().unwrap();
+                guard.insert(self.id, cx.waker().to_owned());
                 Poll::Pending
             }
         }

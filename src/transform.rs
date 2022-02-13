@@ -149,7 +149,7 @@ impl<T: Bidirectional + Send> Bidirectional for Chunker<T> {
                     println!("received a chunk piece");
                     let chunked_data: ChunkedData = bincode::deserialize(&bytes).unwrap();
                     self.add_chunk(chunked_data).await;
-                    println!("transform.rs:152");
+                    println!("received a chunk piece");
                 },
             };
         }
@@ -188,7 +188,7 @@ mod tests {
         chunker.send(data.clone()).await.unwrap();
 
         // Steal the [1,2,3]
-        delegate.recv().await;
+        delegate.recv().await.unwrap();
 
         let data = vec![9,10,11,12,13,14,15,16];
         chunker.send(data.clone()).await.unwrap();
