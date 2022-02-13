@@ -136,9 +136,13 @@ impl<T: Bidirectional + Send> Bidirectional for Chunker<T> {
     async fn recv(&mut self) -> Result<Vec<u8>, VeqError> {
         loop {
             match self.next_ready_chunk().await {
-                Some(ready) => return Ok(ready),
+                Some(ready) => {
+                    println!("received a complete chunk");
+                    return Ok(ready);
+                },
                 None => {
                     let bytes = self.delegate.recv().await.unwrap();
+                    println!("received a chunk piece");
                     let chunked_data: ChunkedData = bincode::deserialize(&bytes).unwrap();
                     self.add_chunk(chunked_data).await;
                 },
