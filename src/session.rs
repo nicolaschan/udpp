@@ -302,7 +302,9 @@ impl Session {
                 let len = guard.read_message(&encrypted, &mut data).await.unwrap();
                 let message = bincode::deserialize::<Message>(&data[..len]).unwrap();
                 match message {
-                    Message::Keepalive => {},
+                    Message::Keepalive => {
+                        println!("received a keepalive");
+                    },
                     Message::Payload(data) => {
                         self.messages_sender.send(data).unwrap();
                         let mut wakers_guard = self.wakers.lock().unwrap();
