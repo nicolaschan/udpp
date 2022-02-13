@@ -310,7 +310,7 @@ impl Session {
                         println!("session.rs:309 received data payload of length {}", data.len());
                         self.messages_sender.send(data).unwrap();
                         let mut wakers_guard = self.wakers.lock().unwrap();
-                        wakers_guard.first_entry().map(|w| w.get().wake_by_ref());
+                        wakers_guard.pop_first().map(|(_uuid, w)| w.wake_by_ref());
                     }
                 }
                 // if let Ok(len) = guard.read_message(&encrypted, &mut data).await {
