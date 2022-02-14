@@ -14,7 +14,7 @@ use uuid::Uuid;
 pub mod veq;
 mod transport;
 mod handler;
-mod snow_types;
+pub mod snow_types;
 mod session;
 mod ip_discovery;
 mod transform;
