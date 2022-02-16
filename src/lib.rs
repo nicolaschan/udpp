@@ -41,7 +41,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_bind_port() {
-        let port = 1337;
+        let port = 54783;
         let socket = VeqSocket::bind(format!("0.0.0.0:{}", port)).await.unwrap();
         let connection_info = socket.connection_info();
         let bound_port = connection_info.addresses.into_iter().next().unwrap().port();

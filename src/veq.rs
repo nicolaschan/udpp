@@ -14,11 +14,10 @@ pub struct ConnectionInfo {
     pub public_key: SnowPublicKey,
 }
 
+#[derive(Clone)]
 pub struct VeqSocket {
     connection_info: ConnectionInfo,
     handler: Arc<Mutex<Handler>>,
-    receiving_handle: JoinHandle<()>,
-    sending_handle: JoinHandle<()>,
 }
 
 impl VeqSocket {
@@ -34,7 +33,7 @@ impl VeqSocket {
 
         let receiver = socket.clone();
         let handler_recv = handler.clone();
-        let receiving_handle = tokio::spawn(async move {
+        tokio::spawn(async move {
             loop {
                 let mut buf: [u8; 65536] = [0u8; 65536];
                 let (len, src) = receiver.recv_from(&mut buf).await.unwrap();
@@ -44,7 +43,7 @@ impl VeqSocket {
         });
 
         let handler_send = handler.clone();
-        let sending_handle = tokio::spawn(async move {
+        tokio::spawn(async move {
             loop {
                 if let Some((dest, packet, ttl)) = outgoing_receiver.recv().await {
                     let serialized = bincode::serialize(&packet).unwrap();
@@ -56,8 +55,6 @@ impl VeqSocket {
         Ok(VeqSocket {
             connection_info,
             handler,
-            receiving_handle,
-            sending_handle,
         })
     }
 
