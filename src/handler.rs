@@ -4,14 +4,15 @@ use tokio::sync::{mpsc::{Receiver, Sender, channel, unbounded_channel, Unbounded
 
 use crate::{session::{Session, SessionPacket, SessionId, PendingSessionInitiator, PendingSessionResponder, Receiving, PendingSessionPoker}, veq::{ConnectionInfo, VeqError}, snow_types::{SnowPublicKey, SnowKeypair, SnowInitiator, SnowResponder}};
 
+#[derive(Clone)]
 pub struct Handler {
     outgoing_sender: UnboundedSender<(SocketAddr, SessionPacket, u32)>,
     pending_sessions_poker: Arc<Mutex<HashMap<SessionId, (PendingSessionPoker, Arc<std::sync::Mutex<Vec<Waker>>>)>>>,
     pending_sessions_initiator: Arc<Mutex<HashMap<SessionId, (PendingSessionInitiator, Arc<std::sync::Mutex<Vec<Waker>>>)>>>,
     pending_sessions_responder: Arc<Mutex<HashMap<SessionId, (PendingSessionResponder, Arc<std::sync::Mutex<Vec<Waker>>>)>>>,
-    established_sessions: HashMap<SessionId, Session>,
+    established_sessions: Arc<Mutex<HashMap<SessionId, Session>>>,
     alive_session_ids: Arc<std::sync::Mutex<HashSet<SessionId>>>,
-    keypair: SnowKeypair,
+    keypair: Arc<SnowKeypair>,
 }
 
 impl Handler {
@@ -22,9 +23,9 @@ impl Handler {
             pending_sessions_poker: Arc::new(Mutex::new(HashMap::new())),
             pending_sessions_initiator: Arc::new(Mutex::new(HashMap::new())),
             pending_sessions_responder: Arc::new(Mutex::new(HashMap::new())),
-            established_sessions: HashMap::new(),
+            established_sessions: Arc::new(Mutex::new(HashMap::new())),
             alive_session_ids: Arc::new(std::sync::Mutex::new(HashSet::new())),
-            keypair,
+            keypair: Arc::new(keypair),
         }, outgoing_receiver)
     }
     pub async fn handle_incoming(&mut self, src: SocketAddr, data: Vec<u8>) {
@@ -56,7 +57,7 @@ impl Handler {
             pending_session.handle_incoming(src, &packet).await;
             if pending_session.is_ready() {
                 match pending_session.to_session().await {
-                    Some(session) => { self.upgrade_session(id, session, wakers); },
+                    Some(session) => { self.upgrade_session(id, session, wakers).await; },
                     None => {},
                 }
             } else {
@@ -72,7 +73,7 @@ impl Handler {
             pending_session.handle_incoming(src, &packet).await;
             if pending_session.is_ready() {
                 match pending_session.to_session().await {
-                    Some(session) => { self.upgrade_session(id, session, wakers); },
+                    Some(session) => { self.upgrade_session(id, session, wakers).await; },
                     None => {},
                 }
             } else {
@@ -81,25 +82,33 @@ impl Handler {
             }
             return;
         }
-        if let Some(session) = self.established_sessions.get_mut(&packet.id) {
+        let mut established_sessions = self.established_sessions.lock().await;
+        if let Some(session) = established_sessions.get_mut(&packet.id) {
             session.handle_incoming(packet).await;
         }
     }
 
-    fn upgrade_session(&mut self, id: SessionId, session: Session, wakers: Arc<std::sync::Mutex<Vec<Waker>>>) {
-        let mut alive_session_guard = self.alive_session_ids.lock().unwrap();
-        alive_session_guard.insert(id);
-        self.established_sessions.insert(id, session);
+    async fn upgrade_session(&self, id: SessionId, session: Session, wakers: Arc<std::sync::Mutex<Vec<Waker>>>) {
+        {
+            let mut alive_session_guard = self.alive_session_ids.lock().unwrap();
+            alive_session_guard.insert(id);
+        }
+        {
+            let mut established_sessions = self.established_sessions.lock().await;
+            established_sessions.insert(id, session);
+        }
         let waker_guard = wakers.lock().unwrap();
         waker_guard.clone().into_iter().for_each(|w| w.wake_by_ref());
     }
 
-    pub async fn session_ready(&mut self, id: SessionId) -> bool {
-        self.established_sessions.contains_key(&id)
+    pub async fn session_ready(&self, id: SessionId) -> bool {
+        let established_sessions = self.established_sessions.lock().await;
+        established_sessions.contains_key(&id)
     }
 
     pub async fn send(&mut self, id: SessionId, data: Vec<u8>) -> Result<(), VeqError> {
-        if let Some(session) = self.established_sessions.get_mut(&id) {
+        let mut established_sessions = self.established_sessions.lock().await;
+        if let Some(session) = established_sessions.get_mut(&id) {
             if !session.send(data).await {
                 return Err(VeqError::Disconnected);
             }
@@ -108,14 +117,16 @@ impl Handler {
         Err(VeqError::Disconnected)
     }
     pub async fn recv_from(&mut self, id: SessionId) -> Option<Receiving> {
-        match self.established_sessions.get_mut(&id) {
+        let mut established_sessions = self.established_sessions.lock().await;
+        match established_sessions.get_mut(&id) {
             Some(session) => Some(session.recv()),
             None => None,
         }
     }
 
-    pub fn remote_addr(&self, id: SessionId) -> Option<SocketAddr> {
-        match self.established_sessions.get(&id) {
+    pub async fn remote_addr(&self, id: SessionId) -> Option<SocketAddr> {
+        let established_sessions = self.established_sessions.lock().await;
+        match established_sessions.get(&id) {
             Some(session) => Some(session.remote_addr),
             None => None,
         }

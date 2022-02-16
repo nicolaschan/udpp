@@ -17,7 +17,7 @@ pub struct ConnectionInfo {
 #[derive(Clone)]
 pub struct VeqSocket {
     connection_info: ConnectionInfo,
-    handler: Arc<Mutex<Handler>>,
+    handler: Handler,
 }
 
 impl VeqSocket {
@@ -29,16 +29,14 @@ impl VeqSocket {
             public_key: keypair.public(),
         };
         let (handler, mut outgoing_receiver) = Handler::new(keypair);
-        let handler = Arc::new(Mutex::new(handler));
 
         let receiver = socket.clone();
-        let handler_recv = handler.clone();
+        let mut handler_recv = handler.clone();
         tokio::spawn(async move {
             loop {
                 let mut buf: [u8; 65536] = [0u8; 65536];
                 let (len, src) = receiver.recv_from(&mut buf).await.unwrap();
-                let mut guard = handler_recv.lock().await;
-                guard.handle_incoming(src, buf[..len].to_vec()).await;
+                handler_recv.handle_incoming(src, buf[..len].to_vec()).await;
             }
         });
 
@@ -68,14 +66,12 @@ impl VeqSocket {
 
     pub async fn connect(&mut self, id: SessionId, info: ConnectionInfo) -> VeqSessionAlias {
         {
-            let mut guard = self.handler.lock().await;
             match self.is_initiator(&info) {
-                true => guard.initiate(id, info).await,
-                false => guard.respond(id, info).await,
+                true => self.handler.initiate(id, info).await,
+                false => self.handler.respond(id, info).await,
             }
         }.await;
-        let guard = self.handler.lock().await;
-        let remote_addr = guard.remote_addr(id).unwrap();
+        let remote_addr = self.handler.remote_addr(id).await.unwrap();
 
         let delegate = BidirectionalSession { id, handler: self.handler.clone() };
         let delegate = Chunker::new(delegate, 1000);
@@ -92,21 +88,19 @@ pub enum VeqError {
 #[derive(Clone)]
 pub struct BidirectionalSession {
     id: SessionId,
-    handler: Arc<Mutex<Handler>>,
+    handler: Handler,
 }
 
 #[async_trait]
 impl Bidirectional for BidirectionalSession {
     async fn send(&mut self, data: Vec<u8>) -> Result<(), VeqError> {
-        let mut guard = self.handler.lock().await;
-        guard.send(self.id, data).await?;
+        self.handler.send(self.id, data).await?;
         Ok(())
     }
 
     async fn recv(&mut self) -> Result<Vec<u8>, VeqError> {
         let future = {
-            let mut guard = self.handler.lock().await;
-            guard.recv_from(self.id).await.unwrap()
+            self.handler.recv_from(self.id).await.unwrap()
         };
         future.await
     }
