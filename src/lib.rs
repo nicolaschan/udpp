@@ -3,10 +3,6 @@
 #![allow(unused_variables)]
 
 #![feature(map_first_last)]
-#![feature(async_stream)]
-#![feature(untagged_unions)]
-#![feature(future_join)]
-#![feature(future_poll_fn)]
 
 use tokio::join;
 use uuid::Uuid;
