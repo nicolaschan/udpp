@@ -1,32 +1,62 @@
-use std::{net::SocketAddr, collections::{HashMap, HashSet}, future::Future, sync::Arc, io::Error, ops::{RangeBounds, Add}, task::{Waker, Poll, Context}, pin::Pin};
+use std::{
+    collections::{HashMap, HashSet},
+    future::Future,
+    net::SocketAddr,
+    pin::Pin,
+    sync::Arc,
+    task::{Context, Poll, Waker},
+};
 
-use tokio::sync::{mpsc::{Receiver, Sender, channel, unbounded_channel, UnboundedSender, UnboundedReceiver}, Mutex};
+use tokio::sync::{
+    mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
+    Mutex,
+};
 
-use crate::{session::{Session, SessionPacket, SessionId, PendingSessionInitiator, PendingSessionResponder, Receiving, PendingSessionPoker}, veq::{ConnectionInfo, VeqError}, snow_types::{SnowPublicKey, SnowKeypair, SnowInitiator, SnowResponder}};
+use crate::{
+    session::{
+        PendingSessionInitiator, PendingSessionPoker, PendingSessionResponder, Receiving, Session,
+        SessionId, SessionPacket,
+    },
+    snow_types::{SnowInitiator, SnowKeypair, SnowResponder},
+    veq::{ConnectionInfo, VeqError},
+};
+
+type PendingSessionPokerWakers = (PendingSessionPoker, Arc<std::sync::Mutex<Vec<Waker>>>);
+type PendingSessionInitiatorWakers = (PendingSessionInitiator, Arc<std::sync::Mutex<Vec<Waker>>>);
+type PendingSessionResponderWakers = (PendingSessionResponder, Arc<std::sync::Mutex<Vec<Waker>>>);
 
 #[derive(Clone)]
 pub struct Handler {
     outgoing_sender: UnboundedSender<(SocketAddr, SessionPacket, u32)>,
-    pending_sessions_poker: Arc<Mutex<HashMap<SessionId, (PendingSessionPoker, Arc<std::sync::Mutex<Vec<Waker>>>)>>>,
-    pending_sessions_initiator: Arc<Mutex<HashMap<SessionId, (PendingSessionInitiator, Arc<std::sync::Mutex<Vec<Waker>>>)>>>,
-    pending_sessions_responder: Arc<Mutex<HashMap<SessionId, (PendingSessionResponder, Arc<std::sync::Mutex<Vec<Waker>>>)>>>,
+    pending_sessions_poker: Arc<Mutex<HashMap<SessionId, PendingSessionPokerWakers>>>,
+    pending_sessions_initiator: Arc<Mutex<HashMap<SessionId, PendingSessionInitiatorWakers>>>,
+    pending_sessions_responder: Arc<Mutex<HashMap<SessionId, PendingSessionResponderWakers>>>,
     established_sessions: Arc<Mutex<HashMap<SessionId, Session>>>,
     alive_session_ids: Arc<std::sync::Mutex<HashSet<SessionId>>>,
     keypair: Arc<SnowKeypair>,
 }
 
+type PacketSender = UnboundedSender<(SocketAddr, SessionPacket, u32)>;
+type PacketReceiver = UnboundedReceiver<(SocketAddr, SessionPacket, u32)>;
+
 impl Handler {
-    pub fn new(keypair: SnowKeypair) -> (Handler, UnboundedReceiver<(SocketAddr, SessionPacket, u32)>) {
-        let (outgoing_sender, outgoing_receiver): (UnboundedSender<(SocketAddr, SessionPacket, u32)>, UnboundedReceiver<(SocketAddr, SessionPacket, u32)>) = unbounded_channel();
-        (Handler {
-            outgoing_sender,
-            pending_sessions_poker: Arc::new(Mutex::new(HashMap::new())),
-            pending_sessions_initiator: Arc::new(Mutex::new(HashMap::new())),
-            pending_sessions_responder: Arc::new(Mutex::new(HashMap::new())),
-            established_sessions: Arc::new(Mutex::new(HashMap::new())),
-            alive_session_ids: Arc::new(std::sync::Mutex::new(HashSet::new())),
-            keypair: Arc::new(keypair),
-        }, outgoing_receiver)
+    pub fn new(
+        keypair: SnowKeypair,
+    ) -> (Handler, UnboundedReceiver<(SocketAddr, SessionPacket, u32)>) {
+        let (outgoing_sender, outgoing_receiver): (PacketSender, PacketReceiver) =
+            unbounded_channel();
+        (
+            Handler {
+                outgoing_sender,
+                pending_sessions_poker: Arc::new(Mutex::new(HashMap::new())),
+                pending_sessions_initiator: Arc::new(Mutex::new(HashMap::new())),
+                pending_sessions_responder: Arc::new(Mutex::new(HashMap::new())),
+                established_sessions: Arc::new(Mutex::new(HashMap::new())),
+                alive_session_ids: Arc::new(std::sync::Mutex::new(HashSet::new())),
+                keypair: Arc::new(keypair),
+            },
+            outgoing_receiver,
+        )
     }
     pub async fn handle_incoming(&mut self, src: SocketAddr, data: Vec<u8>) {
         let packet: SessionPacket = bincode::deserialize(&data[..]).unwrap();
@@ -37,12 +67,12 @@ impl Handler {
         } {
             pending_session.handle_incoming(src, &packet).await;
             if pending_session.is_ready() {
-                match pending_session.to_responder().await {
+                match pending_session.responder().await {
                     Some(session) => {
                         let mut guard = self.pending_sessions_responder.lock().await;
                         guard.insert(id, (session, wakers));
-                    },
-                    None => {},
+                    }
+                    None => {}
                 }
             } else {
                 let mut guard = self.pending_sessions_poker.lock().await;
@@ -56,9 +86,11 @@ impl Handler {
         } {
             pending_session.handle_incoming(src, &packet).await;
             if pending_session.is_ready() {
-                match pending_session.to_session().await {
-                    Some(session) => { self.upgrade_session(id, session, wakers).await; },
-                    None => {},
+                match pending_session.session().await {
+                    Some(session) => {
+                        self.upgrade_session(id, session, wakers).await;
+                    }
+                    None => {}
                 }
             } else {
                 let mut guard = self.pending_sessions_initiator.lock().await;
@@ -69,12 +101,14 @@ impl Handler {
         if let Some((mut pending_session, wakers)) = {
             let mut guard = self.pending_sessions_responder.lock().await;
             guard.remove(&packet.id)
-         } {
+        } {
             pending_session.handle_incoming(src, &packet).await;
             if pending_session.is_ready() {
-                match pending_session.to_session().await {
-                    Some(session) => { self.upgrade_session(id, session, wakers).await; },
-                    None => {},
+                match pending_session.session().await {
+                    Some(session) => {
+                        self.upgrade_session(id, session, wakers).await;
+                    }
+                    None => {}
                 }
             } else {
                 let mut guard = self.pending_sessions_responder.lock().await;
@@ -88,7 +122,12 @@ impl Handler {
         }
     }
 
-    async fn upgrade_session(&self, id: SessionId, session: Session, wakers: Arc<std::sync::Mutex<Vec<Waker>>>) {
+    async fn upgrade_session(
+        &self,
+        id: SessionId,
+        session: Session,
+        wakers: Arc<std::sync::Mutex<Vec<Waker>>>,
+    ) {
         {
             let mut alive_session_guard = self.alive_session_ids.lock().unwrap();
             alive_session_guard.insert(id);
@@ -98,12 +137,10 @@ impl Handler {
             established_sessions.insert(id, session);
         }
         let waker_guard = wakers.lock().unwrap();
-        waker_guard.clone().into_iter().for_each(|w| w.wake_by_ref());
-    }
-
-    pub async fn session_ready(&self, id: SessionId) -> bool {
-        let established_sessions = self.established_sessions.lock().await;
-        established_sessions.contains_key(&id)
+        waker_guard
+            .clone()
+            .into_iter()
+            .for_each(|w| w.wake_by_ref());
     }
 
     pub async fn send(&mut self, id: SessionId, data: Vec<u8>) -> Result<(), VeqError> {
@@ -118,23 +155,22 @@ impl Handler {
     }
     pub async fn recv_from(&mut self, id: SessionId) -> Option<Receiving> {
         let mut established_sessions = self.established_sessions.lock().await;
-        match established_sessions.get_mut(&id) {
-            Some(session) => Some(session.recv()),
-            None => None,
-        }
+        established_sessions
+            .get_mut(&id)
+            .map(|session| session.recv())
     }
 
     pub async fn remote_addr(&self, id: SessionId) -> Option<SocketAddr> {
         let established_sessions = self.established_sessions.lock().await;
-        match established_sessions.get(&id) {
-            Some(session) => Some(session.remote_addr),
-            None => None,
-        }
+        established_sessions
+            .get(&id)
+            .map(|session| session.remote_addr)
     }
 
     pub async fn initiate(&mut self, id: SessionId, info: ConnectionInfo) -> SessionReady {
         let initiator = SnowInitiator::new(&self.keypair, &info.public_key);
-        let pending = PendingSessionInitiator::new(self.outgoing_sender.clone(), id, info, initiator).await;
+        let pending =
+            PendingSessionInitiator::new(self.outgoing_sender.clone(), id, info, initiator).await;
         let wakers = Arc::new(std::sync::Mutex::new(vec![]));
         let mut guard = self.pending_sessions_initiator.lock().await;
         guard.insert(id, (pending, wakers.clone()));
@@ -142,7 +178,8 @@ impl Handler {
     }
     pub async fn respond(&mut self, id: SessionId, info: ConnectionInfo) -> SessionReady {
         let responder = SnowResponder::new(&self.keypair, &info.public_key);
-        let poking = PendingSessionPoker::new(self.outgoing_sender.clone(), id, info, responder).await;
+        let poking =
+            PendingSessionPoker::new(self.outgoing_sender.clone(), id, info, responder).await;
         let wakers = Arc::new(std::sync::Mutex::new(vec![]));
         let mut guard = self.pending_sessions_poker.lock().await;
         guard.insert(id, (poking, wakers.clone()));
@@ -159,9 +196,16 @@ pub struct SessionReady {
 }
 
 impl SessionReady {
-    pub fn new(id: SessionId, wakers: Arc<std::sync::Mutex<Vec<Waker>>>, alive_session_ids: Arc<std::sync::Mutex<HashSet<SessionId>>>) -> SessionReady {
+    pub fn new(
+        id: SessionId,
+        wakers: Arc<std::sync::Mutex<Vec<Waker>>>,
+        alive_session_ids: Arc<std::sync::Mutex<HashSet<SessionId>>>,
+    ) -> SessionReady {
         SessionReady {
-            id, wakers, added_waker: false, alive_session_ids
+            id,
+            wakers,
+            added_waker: false,
+            alive_session_ids,
         }
     }
 }

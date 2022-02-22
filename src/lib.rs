@@ -1,26 +1,19 @@
-#![allow(dead_code)]
-#![allow(unused_imports)]
-#![allow(unused_variables)]
-
 #![feature(map_first_last)]
 
-use tokio::join;
-use uuid::Uuid;
-
-pub mod veq;
-mod transport;
 mod handler;
-pub mod snow_types;
-mod session;
 mod ip_discovery;
+mod session;
+pub mod snow_types;
 mod transform;
+mod transport;
+pub mod veq;
 
 #[cfg(test)]
 mod tests {
     use tokio::join;
     use uuid::Uuid;
 
-    use crate::{veq::{VeqSocket, VeqSession, BidirectionalSession, VeqSessionAlias}, transform::Chunker};
+    use crate::veq::{VeqSessionAlias, VeqSocket};
 
     async fn get_conns() -> (VeqSessionAlias, VeqSessionAlias) {
         let mut socket1 = VeqSocket::bind("0.0.0.0:0").await.unwrap();
@@ -29,10 +22,7 @@ mod tests {
         let id = Uuid::new_v4();
         let info1 = socket1.connection_info();
         let info2 = socket2.connection_info();
-        return join!(
-            socket1.connect(id, info2),
-            socket2.connect(id, info1),
-        );
+        return join!(socket1.connect(id, info2), socket2.connect(id, info1),);
     }
 
     #[tokio::test]
@@ -48,12 +38,12 @@ mod tests {
     async fn test_bidirectional_small() {
         let (mut conn1, mut conn2) = get_conns().await;
 
-        let data = vec![0,1,2,3];
+        let data = vec![0, 1, 2, 3];
         conn1.send(data.clone()).await.unwrap();
         let received = conn2.recv().await;
         assert_eq!(data, received.unwrap());
 
-        let data2 = vec![5,6,7,8];
+        let data2 = vec![5, 6, 7, 8];
         conn2.send(data2.clone()).await.unwrap();
         let received2 = conn1.recv().await;
         assert_eq!(data2, received2.unwrap());
@@ -62,9 +52,9 @@ mod tests {
     #[tokio::test]
     async fn test_queued_small() {
         let (mut conn1, mut conn2) = get_conns().await;
-        let data1 = vec![0,1,2,3];
-        let data2 = vec![5,4,3,2];
-        let data3 = vec![7,8,9,10];
+        let data1 = vec![0, 1, 2, 3];
+        let data2 = vec![5, 4, 3, 2];
+        let data3 = vec![7, 8, 9, 10];
         conn1.send(data1.clone()).await.unwrap();
         conn1.send(data2.clone()).await.unwrap();
         conn1.send(data3.clone()).await.unwrap();
@@ -76,7 +66,10 @@ mod tests {
     #[tokio::test]
     async fn test_large_payload() {
         let (mut conn1, mut conn2) = get_conns().await;
-        let data: Vec<u8> = (1..655350).into_iter().map(|n: usize| (n % 256) as u8).collect();
+        let data: Vec<u8> = (1..655350)
+            .into_iter()
+            .map(|n: usize| (n % 256) as u8)
+            .collect();
         conn1.send(data.clone()).await.unwrap();
         assert_eq!(data, conn2.recv().await.unwrap());
     }

@@ -1,8 +1,7 @@
-use std::{hash::Hash, collections::BTreeSet, sync::Arc};
-use std::io::{Read, Write};
+use std::{collections::BTreeSet, hash::Hash, sync::Arc};
 
-use serde::{Serialize, Deserialize};
-use snow::{Builder, Keypair, HandshakeState, TransportState, StatelessTransportState};
+use serde::{Deserialize, Serialize};
+use snow::{Builder, HandshakeState, Keypair, StatelessTransportState};
 use tokio::sync::Mutex;
 
 static NOISE_PARAMS: &str = "Noise_KK_25519_ChaChaPoly_BLAKE2s";
@@ -26,16 +25,20 @@ impl LossyTransportState {
     }
     pub fn new(stateless: StatelessTransportState, size: usize) -> LossyTransportState {
         LossyTransportState {
-            stateless, 
+            stateless,
             size,
             next_nonce: Arc::new(Mutex::new(0u64)),
-            received_nonces: Arc::new(Mutex::new(BTreeSet::new())), 
+            received_nonces: Arc::new(Mutex::new(BTreeSet::new())),
         }
     }
-    pub async fn write_message(&mut self, payload: &[u8], message: &mut [u8]) -> Result<usize, snow::Error> {
+    pub async fn write_message(
+        &mut self,
+        payload: &[u8],
+        message: &mut [u8],
+    ) -> Result<usize, snow::Error> {
         let mut guard = self.next_nonce.lock().await;
-        let nonce  = guard.clone();
-        (*guard) = *guard + 1;
+        let nonce = *guard;
+        (*guard) += 1;
 
         let len = self.stateless.write_message(nonce, payload, message)?;
 
@@ -48,8 +51,12 @@ impl LossyTransportState {
         let len = serialized.len();
         Ok(len as usize)
     }
-    pub async fn read_message(&mut self, payload: &[u8], message: &mut [u8]) -> Result<usize, snow::Error> {
-        let nonced: Nonced = bincode::deserialize(&payload).unwrap();
+    pub async fn read_message(
+        &mut self,
+        payload: &[u8],
+        message: &mut [u8],
+    ) -> Result<usize, snow::Error> {
+        let nonced: Nonced = bincode::deserialize(payload).unwrap();
         let nonce = nonced.0;
         let payload = nonced.1;
 
@@ -88,6 +95,12 @@ impl SnowKeypair {
     }
 }
 
+impl Default for SnowKeypair {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 pub struct SnowInitiation(Vec<u8>);
 
@@ -95,7 +108,8 @@ pub struct SnowInitiator(HandshakeState, SnowInitiation);
 
 impl SnowInitiator {
     pub fn new(keypair: &SnowKeypair, remote_public_key: &SnowPublicKey) -> SnowInitiator {
-        let mut state = keypair.builder()
+        let mut state = keypair
+            .builder()
             .remote_public_key(&remote_public_key.0[..])
             .build_initiator()
             .unwrap();
@@ -121,7 +135,8 @@ pub struct SnowResponder(HandshakeState);
 
 impl SnowResponder {
     pub fn new(keypair: &SnowKeypair, remote_public_key: &SnowPublicKey) -> SnowResponder {
-        let state = keypair.builder()
+        let state = keypair
+            .builder()
             .remote_public_key(&remote_public_key.0[..])
             .build_responder()
             .unwrap();
@@ -132,15 +147,17 @@ impl SnowResponder {
         self.0.read_message(&initiation.0, &mut temp).unwrap();
         let mut buf = [0u8; 65535];
         let len = self.0.write_message(&[], &mut buf).unwrap();
-        let message = SnowResponse(buf[..len].to_vec());
-        (LossyTransportState::from_stateless(self.0.into_stateless_transport_mode().unwrap()), SnowResponse(buf[..len].to_vec()))
+        let _message = SnowResponse(buf[..len].to_vec());
+        (
+            LossyTransportState::from_stateless(self.0.into_stateless_transport_mode().unwrap()),
+            SnowResponse(buf[..len].to_vec()),
+        )
     }
 }
 
-
 #[cfg(test)]
 mod tests {
-    use super::{SnowKeypair, SnowInitiator, SnowResponder};
+    use super::{SnowInitiator, SnowKeypair, SnowResponder};
 
     #[tokio::test]
     async fn test_initiator_to_responder() {
@@ -154,18 +171,30 @@ mod tests {
         let (mut transport2, response) = responder.response(initiation);
         let mut transport1 = initiator.receive_response(response);
 
-        let data = vec![1,2,3,4];
+        let data = vec![1, 2, 3, 4];
         let mut encrypted_buf = [0u8; 65535];
         let mut result_buf = [0u8; 65535];
-        let len = transport1.write_message(&data, &mut encrypted_buf).await.unwrap();
-        let len = transport2.read_message(&encrypted_buf[..len], &mut result_buf).await.unwrap();
+        let len = transport1
+            .write_message(&data, &mut encrypted_buf)
+            .await
+            .unwrap();
+        let len = transport2
+            .read_message(&encrypted_buf[..len], &mut result_buf)
+            .await
+            .unwrap();
         assert_eq!(&data[..], &result_buf[..len]);
 
-        let data = vec![5,6,7,8];
+        let data = vec![5, 6, 7, 8];
         let mut encrypted_buf = [0u8; 65535];
         let mut result_buf = [0u8; 65535];
-        let len = transport1.write_message(&data, &mut encrypted_buf).await.unwrap();
-        let len = transport2.read_message(&encrypted_buf[..len], &mut result_buf).await.unwrap();
+        let len = transport1
+            .write_message(&data, &mut encrypted_buf)
+            .await
+            .unwrap();
+        let len = transport2
+            .read_message(&encrypted_buf[..len], &mut result_buf)
+            .await
+            .unwrap();
         assert_eq!(&data[..], &result_buf[..len]);
     }
 
@@ -181,18 +210,30 @@ mod tests {
         let (mut transport2, response) = responder.response(initiation);
         let mut transport1 = initiator.receive_response(response);
 
-        let data = vec![1,2,3,4];
+        let data = vec![1, 2, 3, 4];
         let mut encrypted_buf = [0u8; 65535];
         let mut result_buf = [0u8; 65535];
-        let len = transport2.write_message(&data, &mut encrypted_buf).await.unwrap();
-        let len = transport1.read_message(&encrypted_buf[..len], &mut result_buf).await.unwrap();
+        let len = transport2
+            .write_message(&data, &mut encrypted_buf)
+            .await
+            .unwrap();
+        let len = transport1
+            .read_message(&encrypted_buf[..len], &mut result_buf)
+            .await
+            .unwrap();
         assert_eq!(&data[..], &result_buf[..len]);
 
-        let data = vec![5,6,7,8];
+        let data = vec![5, 6, 7, 8];
         let mut encrypted_buf = [0u8; 65535];
         let mut result_buf = [0u8; 65535];
-        let len = transport2.write_message(&data, &mut encrypted_buf).await.unwrap();
-        let len = transport1.read_message(&encrypted_buf[..len], &mut result_buf).await.unwrap();
+        let len = transport2
+            .write_message(&data, &mut encrypted_buf)
+            .await
+            .unwrap();
+        let len = transport1
+            .read_message(&encrypted_buf[..len], &mut result_buf)
+            .await
+            .unwrap();
         assert_eq!(&data[..], &result_buf[..len]);
     }
 
@@ -208,18 +249,30 @@ mod tests {
         let (mut transport2, response) = responder.response(initiation);
         let mut transport1 = initiator.receive_response(response);
 
-        let data = vec![1,2,3,4];
+        let data = vec![1, 2, 3, 4];
         let mut encrypted_buf = [0u8; 65535];
         let mut result_buf = [0u8; 65535];
-        let len = transport1.write_message(&data, &mut encrypted_buf).await.unwrap();
-        let len = transport2.read_message(&encrypted_buf[..len], &mut result_buf).await.unwrap();
+        let len = transport1
+            .write_message(&data, &mut encrypted_buf)
+            .await
+            .unwrap();
+        let len = transport2
+            .read_message(&encrypted_buf[..len], &mut result_buf)
+            .await
+            .unwrap();
         assert_eq!(&data[..], &result_buf[..len]);
 
-        let data = vec![5,6,7,8];
+        let data = vec![5, 6, 7, 8];
         let mut encrypted_buf = [0u8; 65535];
         let mut result_buf = [0u8; 65535];
-        let len = transport2.write_message(&data, &mut encrypted_buf).await.unwrap();
-        let len = transport1.read_message(&encrypted_buf[..len], &mut result_buf).await.unwrap();
+        let len = transport2
+            .write_message(&data, &mut encrypted_buf)
+            .await
+            .unwrap();
+        let len = transport1
+            .read_message(&encrypted_buf[..len], &mut result_buf)
+            .await
+            .unwrap();
         assert_eq!(&data[..], &result_buf[..len]);
     }
 
@@ -236,14 +289,23 @@ mod tests {
         let (mut transport2, response) = responder.response(initiation);
         let mut transport1 = initiator.receive_response(response);
 
-        let data = vec![1,2,3,4];
+        let data = vec![1, 2, 3, 4];
         let mut encrypted_buf = [0u8; 65535];
         let mut result_buf = [0u8; 65535];
 
-        let encrypted_len = transport1.write_message(&data, &mut encrypted_buf).await.unwrap();
-        let len = transport2.read_message(&encrypted_buf[..encrypted_len], &mut result_buf).await.unwrap();
+        let encrypted_len = transport1
+            .write_message(&data, &mut encrypted_buf)
+            .await
+            .unwrap();
+        let len = transport2
+            .read_message(&encrypted_buf[..encrypted_len], &mut result_buf)
+            .await
+            .unwrap();
         assert_eq!(&data[..], &result_buf[..len]);
 
-        transport2.read_message(&encrypted_buf[..encrypted_len], &mut result_buf).await.unwrap();
+        transport2
+            .read_message(&encrypted_buf[..encrypted_len], &mut result_buf)
+            .await
+            .unwrap();
     }
 }

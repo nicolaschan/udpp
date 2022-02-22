@@ -1,8 +1,11 @@
-use std::{collections::{HashMap, BinaryHeap, VecDeque}, iter, sync::Arc};
+use std::{
+    collections::{HashMap, VecDeque},
+    iter,
+    sync::Arc,
+};
 
 use crate::veq::VeqError;
 use tokio::sync::Mutex;
-use tokio_stream::{self as stream, StreamExt};
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -36,7 +39,7 @@ pub struct ChunkedData {
 
 #[derive(Debug)]
 pub struct ChunkGroup {
-    chunks:  Vec<Option<ChunkedData>>,
+    chunks: Vec<Option<ChunkedData>>,
     size: u64,
     group_length: u64,
 }
@@ -57,7 +60,7 @@ impl ChunkGroup {
     }
 
     pub fn is_complete(&self) -> bool {
-        self.size == self.group_length 
+        self.size == self.group_length
     }
 
     pub fn collect(self) -> Vec<u8> {
@@ -65,7 +68,7 @@ impl ChunkGroup {
         for chunk in self.chunks {
             output.extend(chunk.unwrap().data);
         }
-        return output;
+        output
     }
 }
 
@@ -115,20 +118,24 @@ impl<T: Bidirectional + Send> Bidirectional for Chunker<T> {
     async fn send(&mut self, data: Vec<u8>) -> Result<(), VeqError> {
         let chunks = data.chunks(self.chunk_size as usize);
         let group_length = chunks.len() as u64;
-        let group = self.current_group.lock().await.clone();
+        let group = *self.current_group.lock().await;
 
         let mut current_group_guard = self.current_group.lock().await;
         *current_group_guard = group + 1;
 
-        let data: Vec<Vec<u8>> = chunks.into_iter()
+        let data: Vec<Vec<u8>> = chunks
+            .into_iter()
             .map(|s| s.to_vec())
             .enumerate()
             .map(|(index, data)| ChunkedData {
-                group, index: index as u64, group_length, data
+                group,
+                index: index as u64,
+                group_length,
+                data,
             })
             .map(|chunked| bincode::serialize(&chunked).unwrap())
             .collect();
-        
+
         for d in data {
             self.delegate.send(d).await?;
         }
@@ -140,26 +147,24 @@ impl<T: Bidirectional + Send> Bidirectional for Chunker<T> {
             match self.next_ready_chunk().await {
                 Some(ready) => {
                     return Ok(ready);
-                },
+                }
                 None => {
                     let bytes = self.delegate.recv().await.unwrap();
                     let chunked_data: ChunkedData = bincode::deserialize(&bytes).unwrap();
                     self.add_chunk(chunked_data).await;
-                },
+                }
             };
         }
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use std::{collections::VecDeque, sync::Arc};
 
-    use tokio::{join, sync::Mutex};
-    use uuid::Uuid;
+    use tokio::sync::Mutex;
 
-    use crate::{veq::{VeqSocket, VeqSession}, transform::Chunker};
+    use crate::transform::Chunker;
 
     use super::Bidirectional;
 
@@ -168,7 +173,7 @@ mod tests {
         let delegate: Arc<Mutex<VecDeque<Vec<u8>>>> = Arc::new(Mutex::new(VecDeque::new()));
         let mut chunker = Chunker::new(delegate, 3);
 
-        let data = vec![1,2,3,4,5,6,7,8];
+        let data = vec![1, 2, 3, 4, 5, 6, 7, 8];
         chunker.send(data.clone()).await.unwrap();
         let received = chunker.recv().await.unwrap();
         assert_eq!(data, received);
@@ -179,13 +184,13 @@ mod tests {
         let mut delegate: Arc<Mutex<VecDeque<Vec<u8>>>> = Arc::new(Mutex::new(VecDeque::new()));
         let mut chunker = Chunker::new(delegate.clone(), 3);
 
-        let data = vec![1,2,3,4,5,6,7,8];
+        let data = vec![1, 2, 3, 4, 5, 6, 7, 8];
         chunker.send(data.clone()).await.unwrap();
 
         // Steal the [1,2,3]
         delegate.recv().await.unwrap();
 
-        let data = vec![9,10,11,12,13,14,15,16];
+        let data = vec![9, 10, 11, 12, 13, 14, 15, 16];
         chunker.send(data.clone()).await.unwrap();
         let received = chunker.recv().await.unwrap();
         assert_eq!(data, received);

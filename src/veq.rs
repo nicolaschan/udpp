@@ -1,12 +1,17 @@
-use std::{io::Error, sync::Arc, net::SocketAddr, future::Future, pin::Pin, task::{Poll, Context}, collections::HashSet};
+use std::{collections::HashSet, io::Error, net::SocketAddr, sync::Arc};
 
 use async_trait::async_trait;
-use serde::{Serialize, Deserialize};
-use snow::Keypair;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use tokio::{task::JoinHandle, sync::{Mutex, mpsc::{UnboundedSender, UnboundedReceiver, unbounded_channel}}, net::{UdpSocket, ToSocketAddrs}};
+use tokio::net::{ToSocketAddrs, UdpSocket};
 
-use crate::{transport::{AddressedSender, AddressedReceiver}, snow_types::{SnowKeypair, SnowPublicKey}, handler::Handler, session::{Session, SessionId}, ip_discovery::discover_ips, transform::{Bidirectional, Chunker}};
+use crate::{
+    handler::Handler,
+    ip_discovery::discover_ips,
+    session::SessionId,
+    snow_types::{SnowKeypair, SnowPublicKey},
+    transform::{Bidirectional, Chunker},
+};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ConnectionInfo {
@@ -40,13 +45,14 @@ impl VeqSocket {
             }
         });
 
-        let handler_send = handler.clone();
         tokio::spawn(async move {
             loop {
                 if let Some((dest, packet, ttl)) = outgoing_receiver.recv().await {
                     let serialized = bincode::serialize(&packet).unwrap();
                     socket.set_ttl(ttl).unwrap();
-                    if let Ok(_) = socket.send_to(&serialized[..], dest).await {}
+                    if let Err(e) = socket.send_to(&serialized[..], dest).await {
+                        eprintln!("Error sending packet: {}", e);
+                    }
                 }
             }
         });
@@ -70,12 +76,19 @@ impl VeqSocket {
                 true => self.handler.initiate(id, info).await,
                 false => self.handler.respond(id, info).await,
             }
-        }.await;
+        }
+        .await;
         let remote_addr = self.handler.remote_addr(id).await.unwrap();
 
-        let delegate = BidirectionalSession { id, handler: self.handler.clone() };
+        let delegate = BidirectionalSession {
+            id,
+            handler: self.handler.clone(),
+        };
         let delegate = Chunker::new(delegate, 1000);
-        VeqSession { delegate, remote_addr }
+        VeqSession {
+            delegate,
+            remote_addr,
+        }
     }
 }
 
@@ -99,9 +112,7 @@ impl Bidirectional for BidirectionalSession {
     }
 
     async fn recv(&mut self) -> Result<Vec<u8>, VeqError> {
-        let future = {
-            self.handler.recv_from(self.id).await.unwrap()
-        };
+        let future = { self.handler.recv_from(self.id).await.unwrap() };
         future.await
     }
 }

@@ -1,10 +1,10 @@
-use std::{io::{BufRead, Read, Write}};
+use std::io::{BufRead, Read, Write};
 
 use clap::Parser;
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-use veq::veq::{VeqSocket, ConnectionInfo};
+use veq::veq::{ConnectionInfo, VeqSocket};
 
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
@@ -22,7 +22,9 @@ struct ConnectionData {
 #[tokio::main]
 async fn main() {
     let args = Args::parse();
-    let mut socket = VeqSocket::bind(format!("0.0.0.0:{}", args.port)).await.unwrap();
+    let mut socket = VeqSocket::bind(format!("0.0.0.0:{}", args.port))
+        .await
+        .unwrap();
 
     let conn_info = socket.connection_info();
     let id = Uuid::from_u128(0);
@@ -40,7 +42,7 @@ async fn main() {
     let stdin = std::io::stdin();
     let mut peer_data_emoji = String::new();
     stdin.lock().read_line(&mut peer_data_emoji).unwrap();
-    let peer_data_emoji = peer_data_emoji.replace("\n", "").replace(" ", "");
+    let peer_data_emoji = peer_data_emoji.replace('\n', "").replace(' ', "");
     let peer_data_compressed = base64::decode(peer_data_emoji).unwrap();
     let mut peer_data_serialized = Vec::new();
     zstd::stream::copy_decode(&peer_data_compressed[..], &mut peer_data_serialized).unwrap();
@@ -57,7 +59,7 @@ async fn main() {
             let received = conn_clone.recv().await.unwrap();
             stdout.write_all(&received[..]).unwrap();
             stdout.flush().unwrap();
-            println!("");
+            println!();
         }
     });
 

@@ -1,6 +1,10 @@
 use std::{net::SocketAddr, sync::Arc};
 
-use async_std::{channel::{Sender, Receiver}, sync::Mutex, net::UdpSocket};
+use async_std::{
+    channel::{Receiver, Sender},
+    net::UdpSocket,
+    sync::Mutex,
+};
 use async_trait::async_trait;
 
 #[async_trait]
