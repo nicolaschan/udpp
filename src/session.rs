@@ -346,6 +346,7 @@ impl Session {
             loop {
                 interval.tick().await;
                 if !heartbeat_clone.load(Ordering::Acquire) {
+                    // This session has died, so clean up all remaining wakers
                     dead_clone.store(true, Ordering::Release);
                     let guard = wakers_clone.lock().unwrap();
                     guard
