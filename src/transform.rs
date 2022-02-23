@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{VecDeque, BTreeMap},
     iter,
     sync::Arc,
 };
@@ -77,7 +77,7 @@ pub struct Chunker<T> {
     delegate: T,
     chunk_size: u64,
     current_group: Arc<Mutex<u64>>,
-    chunk_groups: Arc<Mutex<HashMap<u64, ChunkGroup>>>,
+    chunk_groups: Arc<Mutex<BTreeMap<u64, ChunkGroup>>>,
     completed_chunks: Arc<Mutex<VecDeque<Vec<u8>>>>,
 }
 
@@ -87,7 +87,7 @@ impl<T> Chunker<T> {
             delegate,
             chunk_size,
             current_group: Arc::new(Mutex::new(0)),
-            chunk_groups: Arc::new(Mutex::new(HashMap::new())),
+            chunk_groups: Arc::new(Mutex::new(BTreeMap::new())),
             completed_chunks: Arc::new(Mutex::new(VecDeque::new())),
         }
     }
@@ -105,6 +105,12 @@ impl<T> Chunker<T> {
         if is_complete {
             let g = self.chunk_groups.lock().await.remove(&group_id).unwrap();
             self.completed_chunks.lock().await.push_back(g.collect());
+        }
+
+        // Clean up old chunk groups
+        let mut chunk_groups_guard = self.chunk_groups.lock().await;
+        if chunk_groups_guard.len() > 10 {
+            chunk_groups_guard.pop_first();
         }
     }
 
