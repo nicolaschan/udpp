@@ -50,8 +50,8 @@ impl VeqSocket {
                 if let Some((dest, packet, ttl)) = outgoing_receiver.recv().await {
                     let serialized = bincode::serialize(&packet).unwrap();
                     socket.set_ttl(ttl).unwrap();
-                    if let Err(e) = socket.send_to(&serialized[..], dest).await {
-                        eprintln!("Error sending packet: {}", e);
+                    if let Err(_e) = socket.send_to(&serialized[..], dest).await {
+                        // eprintln!("Error sending packet: {}", e);
                     }
                 }
             }
