@@ -73,4 +73,33 @@ mod tests {
         conn1.send(data.clone()).await.unwrap();
         assert_eq!(data, conn2.recv().await.unwrap());
     }
+
+    #[tokio::test]
+    async fn test_session_id_reuse() {
+        let mut socket1 = VeqSocket::bind("0.0.0.0:0").await.unwrap();
+        let mut socket2 = VeqSocket::bind("0.0.0.0:0").await.unwrap();
+
+        let id = Uuid::new_v4();
+        let info1 = socket1.connection_info();
+        let info2 = socket2.connection_info();
+
+        let (mut session1, mut session2) = join!(
+            socket1.connect(id, info2.clone()),
+            socket2.connect(id, info1.clone()),
+        );
+
+        session1.send(vec![0, 1, 2, 3]).await.unwrap();
+        assert_eq!(vec![0, 1, 2, 3], session2.recv().await.unwrap());
+
+        drop(session1);
+        drop(session2);
+
+        let (mut session1, mut session2) = join!(
+            socket1.connect(id, info2),
+            socket2.connect(id, info1),
+        );
+
+        session1.send(vec![4, 5, 6, 7]).await.unwrap();
+        assert_eq!(vec![4, 5, 6, 7], session2.recv().await.unwrap());
+    }
 }

@@ -415,15 +415,27 @@ impl Session {
         }
         true
     }
-    pub fn recv(&mut self) -> Receiving {
-        Receiving::new(
+    pub fn recv(&mut self) -> Option<Receiving> {
+        if self.is_dead() {
+            return None;
+        }
+        Some(Receiving::new(
             self.wakers.clone(),
             self.messages_receiver.clone(),
             self.dead.clone(),
-        )
+        ))
     }
     pub fn is_dead(&self) -> bool {
         self.dead.load(Ordering::Relaxed)
+    }
+    pub fn close(&self) {
+        self.dead.store(true, Ordering::Release);
+    }
+}
+
+impl Drop for Session {
+    fn drop(&mut self) {
+        self.close();
     }
 }
 

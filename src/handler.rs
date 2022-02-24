@@ -153,11 +153,19 @@ impl Handler {
         }
         Err(VeqError::Disconnected)
     }
+
     pub async fn recv_from(&mut self, id: SessionId) -> Option<Receiving> {
         let mut established_sessions = self.established_sessions.lock().await;
-        established_sessions
-            .get_mut(&id)
-            .map(|session| session.recv())
+        match established_sessions.get_mut(&id) {
+            Some(session) => {
+                if session.is_dead() {
+                    established_sessions.remove(&id);
+                    return None;
+                }
+                session.recv()
+            },
+            None => None,
+        }
     }
 
     pub async fn remote_addr(&self, id: SessionId) -> Option<SocketAddr> {
@@ -168,6 +176,7 @@ impl Handler {
     }
 
     pub async fn initiate(&mut self, id: SessionId, info: ConnectionInfo) -> SessionReady {
+        self.remove_session(id).await;
         let initiator = SnowInitiator::new(&self.keypair, &info.public_key);
         let pending =
             PendingSessionInitiator::new(self.outgoing_sender.clone(), id, info, initiator).await;
@@ -177,6 +186,7 @@ impl Handler {
         SessionReady::new(id, wakers, self.alive_session_ids.clone())
     }
     pub async fn respond(&mut self, id: SessionId, info: ConnectionInfo) -> SessionReady {
+        self.remove_session(id).await;
         let responder = SnowResponder::new(&self.keypair, &info.public_key);
         let poking =
             PendingSessionPoker::new(self.outgoing_sender.clone(), id, info, responder).await;
@@ -184,6 +194,29 @@ impl Handler {
         let mut guard = self.pending_sessions_poker.lock().await;
         guard.insert(id, (poking, wakers.clone()));
         SessionReady::new(id, wakers, self.alive_session_ids.clone())
+    }
+
+    async fn remove_session(&mut self, id: SessionId) {
+        {
+            let mut pokers = self.pending_sessions_poker.lock().await;
+            pokers.remove(&id);
+        }
+        {
+            let mut initiating = self.pending_sessions_initiator.lock().await;
+            initiating.remove(&id);
+        }
+        {
+            let mut responding = self.pending_sessions_responder.lock().await;
+            responding.remove(&id);
+        }
+        {
+            let mut established = self.established_sessions.lock().await;
+            established.remove(&id);
+        }
+        {
+            let mut alive_session_guard = self.alive_session_ids.lock().unwrap();
+            alive_session_guard.remove(&id);
+        }
     }
 }
 
