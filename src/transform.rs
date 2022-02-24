@@ -155,7 +155,7 @@ impl<T: Bidirectional + Send> Bidirectional for Chunker<T> {
                     return Ok(ready);
                 }
                 None => {
-                    let bytes = self.delegate.recv().await.unwrap();
+                    let bytes = self.delegate.recv().await?;
                     let chunked_data: ChunkedData = bincode::deserialize(&bytes).unwrap();
                     self.add_chunk(chunked_data).await;
                 }
