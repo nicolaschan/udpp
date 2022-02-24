@@ -19,8 +19,9 @@ pub async fn public_v4(socket: &UdpSocket) -> HashSet<SocketAddr> {
     let mut ips = HashSet::new();
     if let Some(stun_addr_v4) = "stun.l.google.com:19302"
         .to_socket_addrs()
-        .unwrap()
-        .find(|x| x.is_ipv4())
+        .ok()
+        .map(|mut iter| iter.find(|x| x.is_ipv4()))
+        .flatten()
     {
         let client = StunClient::new(stun_addr_v4);
         if let Ok(addr) = client.query_external_address_async(socket).await {
@@ -35,12 +36,13 @@ pub async fn public_v4(socket: &UdpSocket) -> HashSet<SocketAddr> {
 
 pub async fn public_v6(socket: &UdpSocket) -> HashSet<SocketAddr> {
     let mut ips = HashSet::new();
-    if let Some(stun_addr_v4) = "stun.l.google.com:19302"
+    if let Some(stun_addr_v6) = "stun.l.google.com:19302"
         .to_socket_addrs()
-        .unwrap()
-        .find(|x| x.is_ipv4())
+        .ok()
+        .map(|mut iter| iter.find(|x| x.is_ipv6()))
+        .flatten()
     {
-        let client = StunClient::new(stun_addr_v4);
+        let client = StunClient::new(stun_addr_v6);
         if let Ok(addr) = client.query_external_address_async(socket).await {
             ips.insert(addr);
             let mut ip_with_port = addr;
