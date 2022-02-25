@@ -151,7 +151,9 @@ impl SnowResponder {
     }
     pub fn response(mut self, initiation: SnowInitiation) -> (LossyTransportState, SnowResponse) {
         let mut temp = [0u8; 65535];
-        self.0.read_message(&initiation.0, &mut temp).unwrap();
+        if let Err(_e) = self.0.read_message(&initiation.0, &mut temp) {
+            // eprintln!("Snow read_message error: {:?}", e);
+        };
         let mut buf = [0u8; 65535];
         let len = self.0.write_message(&[], &mut buf).unwrap();
         let _message = SnowResponse(buf[..len].to_vec());
