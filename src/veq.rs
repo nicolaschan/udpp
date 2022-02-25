@@ -9,7 +9,7 @@ use crate::{
     handler::Handler,
     ip_discovery::discover_ips,
     session::SessionId,
-    snow_types::{SnowKeypair, SnowPublicKey},
+    snow_types::{SnowKeypair, SnowPublicKey, SnowPrivateKey},
     transform::{Bidirectional, Chunker},
 };
 
@@ -22,13 +22,18 @@ pub struct ConnectionInfo {
 #[derive(Clone)]
 pub struct VeqSocket {
     connection_info: ConnectionInfo,
+    private_key: SnowPrivateKey,
     handler: Handler,
 }
 
 impl VeqSocket {
     pub async fn bind<A: ToSocketAddrs>(addrs: A) -> Result<VeqSocket, Error> {
+        let private_key = SnowKeypair::new().private();
+        VeqSocket::bind_with_key(addrs, private_key).await
+    }
+    pub async fn bind_with_key<A: ToSocketAddrs>(addrs: A, private_key: SnowPrivateKey) -> Result<VeqSocket, Error> {
         let socket = Arc::new(UdpSocket::bind(addrs).await?);
-        let keypair = SnowKeypair::new();
+        let keypair = SnowKeypair::from_private(&private_key);
         let connection_info = ConnectionInfo {
             addresses: discover_ips(&socket).await,
             public_key: keypair.public(),
@@ -58,6 +63,7 @@ impl VeqSocket {
         });
         Ok(VeqSocket {
             connection_info,
+            private_key,
             handler,
         })
     }
@@ -68,6 +74,10 @@ impl VeqSocket {
 
     pub fn is_initiator(&self, info: &ConnectionInfo) -> bool {
         self.connection_info.public_key < info.public_key
+    }
+
+    pub fn private_key(&self) -> SnowPrivateKey {
+        self.private_key.clone()
     }
 
     pub async fn connect(&mut self, id: SessionId, info: ConnectionInfo) -> VeqSessionAlias {

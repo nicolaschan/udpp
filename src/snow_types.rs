@@ -76,12 +76,19 @@ pub struct SnowKeypair(Keypair);
 #[derive(Clone, Debug, Serialize, Deserialize, PartialOrd, Eq, PartialEq, Hash)]
 pub struct SnowPublicKey(Vec<u8>);
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SnowPrivateKey(Vec<u8>);
 
 impl SnowKeypair {
     pub fn new() -> SnowKeypair {
         let keypair = builder().generate_keypair().unwrap();
+        SnowKeypair(keypair)
+    }
+    pub fn from_private(private: &SnowPrivateKey) -> SnowKeypair {
+        let keypair = builder()
+            .local_private_key(&private.0)
+            .generate_keypair()
+            .unwrap();
         SnowKeypair(keypair)
     }
     pub fn public(&self) -> SnowPublicKey {
