@@ -109,7 +109,7 @@ impl PendingSessionPoker {
     pub async fn responder(self) -> Option<PendingSessionResponder> {
         if let Some((addr, initiation)) = self.working_remote_addr {
             self.handle.abort();
-            let (transport, response) = self.responder.response(initiation);
+            let (transport, response) = self.responder.response(initiation).ok()?;
             return Some(
                 PendingSessionResponder::new(
                     self.sender.clone(),

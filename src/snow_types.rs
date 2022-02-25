@@ -149,18 +149,16 @@ impl SnowResponder {
             .unwrap();
         SnowResponder(state)
     }
-    pub fn response(mut self, initiation: SnowInitiation) -> (LossyTransportState, SnowResponse) {
+    pub fn response(mut self, initiation: SnowInitiation) -> Result<(LossyTransportState, SnowResponse), snow::Error> {
         let mut temp = [0u8; 65535];
-        if let Err(_e) = self.0.read_message(&initiation.0, &mut temp) {
-            // eprintln!("Snow read_message error: {:?}", e);
-        };
+        self.0.read_message(&initiation.0, &mut temp)?;
         let mut buf = [0u8; 65535];
-        let len = self.0.write_message(&[], &mut buf).unwrap();
+        let len = self.0.write_message(&[], &mut buf)?;
         let _message = SnowResponse(buf[..len].to_vec());
-        (
-            LossyTransportState::from_stateless(self.0.into_stateless_transport_mode().unwrap()),
+        Ok((
+            LossyTransportState::from_stateless(self.0.into_stateless_transport_mode()?),
             SnowResponse(buf[..len].to_vec()),
-        )
+        ))
     }
 }
 
@@ -177,7 +175,7 @@ mod tests {
         let responder = SnowResponder::new(&keypair2, &keypair1.public());
 
         let initiation = initiator.initiation();
-        let (mut transport2, response) = responder.response(initiation);
+        let (mut transport2, response) = responder.response(initiation).unwrap();
         let mut transport1 = initiator.receive_response(response);
 
         let data = vec![1, 2, 3, 4];
@@ -216,7 +214,7 @@ mod tests {
         let responder = SnowResponder::new(&keypair2, &keypair1.public());
 
         let initiation = initiator.initiation();
-        let (mut transport2, response) = responder.response(initiation);
+        let (mut transport2, response) = responder.response(initiation).unwrap();
         let mut transport1 = initiator.receive_response(response);
 
         let data = vec![1, 2, 3, 4];
@@ -255,7 +253,7 @@ mod tests {
         let responder = SnowResponder::new(&keypair2, &keypair1.public());
 
         let initiation = initiator.initiation();
-        let (mut transport2, response) = responder.response(initiation);
+        let (mut transport2, response) = responder.response(initiation).unwrap();
         let mut transport1 = initiator.receive_response(response);
 
         let data = vec![1, 2, 3, 4];
@@ -295,7 +293,7 @@ mod tests {
         let responder = SnowResponder::new(&keypair2, &keypair1.public());
 
         let initiation = initiator.initiation();
-        let (mut transport2, response) = responder.response(initiation);
+        let (mut transport2, response) = responder.response(initiation).unwrap();
         let mut transport1 = initiator.receive_response(response);
 
         let data = vec![1, 2, 3, 4];
