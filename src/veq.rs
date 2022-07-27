@@ -127,6 +127,12 @@ impl Bidirectional for BidirectionalSession {
     }
 }
 
+impl Drop for BidirectionalSession {
+    fn drop(&mut self) {
+        self.handler.close_session(self.id);
+    }
+}
+
 #[derive(Clone)]
 pub struct VeqSession<T> {
     delegate: T,

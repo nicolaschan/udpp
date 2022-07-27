@@ -102,4 +102,11 @@ mod tests {
         session1.send(vec![4, 5, 6, 7]).await.unwrap();
         assert_eq!(vec![4, 5, 6, 7], session2.recv().await.unwrap());
     }
+
+    #[tokio::test]
+    async fn test_session_drop() {
+        let (conn1, mut conn2) = get_conns().await;
+        drop(conn1);
+        assert!(conn2.recv().await.is_err());
+    }
 }

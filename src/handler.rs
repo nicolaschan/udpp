@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     future::Future,
     net::SocketAddr,
     pin::Pin,
@@ -21,6 +21,8 @@ use crate::{
     veq::{ConnectionInfo, VeqError},
 };
 
+pub type OneTimeId = SessionId;
+
 type PendingSessionPokerWakers = (PendingSessionPoker, Arc<std::sync::Mutex<Vec<Waker>>>);
 type PendingSessionInitiatorWakers = (PendingSessionInitiator, Arc<std::sync::Mutex<Vec<Waker>>>);
 type PendingSessionResponderWakers = (PendingSessionResponder, Arc<std::sync::Mutex<Vec<Waker>>>);
@@ -34,6 +36,7 @@ pub struct Handler {
     established_sessions: Arc<Mutex<HashMap<SessionId, Session>>>,
     alive_session_ids: Arc<std::sync::Mutex<HashSet<SessionId>>>,
     keypair: Arc<SnowKeypair>,
+    one_time_ids: Arc<Mutex<HashMap<OneTimeId, SessionId>>>,
 }
 
 type PacketSender = UnboundedSender<(SocketAddr, SessionPacket, u32)>;
@@ -54,6 +57,7 @@ impl Handler {
                 established_sessions: Arc::new(Mutex::new(HashMap::new())),
                 alive_session_ids: Arc::new(std::sync::Mutex::new(HashSet::new())),
                 keypair: Arc::new(keypair),
+                one_time_ids: Arc::new(Mutex::new(HashMap::new())),
             },
             outgoing_receiver,
         )
@@ -196,7 +200,14 @@ impl Handler {
         SessionReady::new(id, wakers, self.alive_session_ids.clone())
     }
 
-    async fn remove_session(&mut self, id: SessionId) {
+    pub fn close_session(&self, oneTimeId: SessionId) {
+        todo!("Implement closing sessions");
+        tokio::task::spawn(async move {
+            let mut guard = self.one_time_ids.lock().await;
+        });
+    }
+
+    async fn remove_session(&self, id: SessionId) {
         {
             let mut pokers = self.pending_sessions_poker.lock().await;
             pokers.remove(&id);
