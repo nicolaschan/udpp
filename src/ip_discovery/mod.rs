@@ -1,6 +1,6 @@
 use std::{
     collections::HashSet,
-    net::{SocketAddr, ToSocketAddrs},
+    net::{SocketAddr, ToSocketAddrs, Ipv4Addr},
 };
 
 use pnet::datalink;
@@ -20,8 +20,7 @@ pub async fn public_v4(socket: &UdpSocket) -> HashSet<SocketAddr> {
     if let Some(stun_addr_v4) = "stun.l.google.com:19302"
         .to_socket_addrs()
         .ok()
-        .map(|mut iter| iter.find(|x| x.is_ipv4()))
-        .flatten()
+        .and_then(|mut iter| iter.find(|x| x.is_ipv4()))
     {
         let client = StunClient::new(stun_addr_v4);
         if let Ok(addr) = client.query_external_address_async(socket).await {
@@ -39,8 +38,7 @@ pub async fn public_v6(socket: &UdpSocket) -> HashSet<SocketAddr> {
     if let Some(stun_addr_v6) = "stun.l.google.com:19302"
         .to_socket_addrs()
         .ok()
-        .map(|mut iter| iter.find(|x| x.is_ipv6()))
-        .flatten()
+        .and_then(|mut iter| iter.find(|x| x.is_ipv6()))
     {
         let client = StunClient::new(stun_addr_v6);
         if let Ok(addr) = client.query_external_address_async(socket).await {
@@ -63,6 +61,10 @@ pub async fn discover_ips(socket: &UdpSocket) -> HashSet<SocketAddr> {
     ips.extend(&public_v4(socket).await);
     ips.extend(&public_v6(socket).await);
 
+    ips.drain_filter(|x| {
+        x.ip() == Ipv4Addr::new(0, 0, 0, 0)
+    });
+
     ips
 }
 
@@ -70,11 +72,16 @@ pub async fn discover_ips(socket: &UdpSocket) -> HashSet<SocketAddr> {
 mod tests {
     use super::discover_ips;
     use tokio::net::UdpSocket;
+    use std::net::SocketAddr;
 
     #[tokio::test]
     async fn test_ifs() {
         let socket = UdpSocket::bind("0.0.0.0:0").await.unwrap();
         let ips = discover_ips(&socket).await;
-        assert!(ips.contains(&socket.local_addr().unwrap()));
+
+        let port = socket.local_addr().unwrap().port();
+
+        assert!(!ips.contains(&format!("0.0.0.0:{}", port).parse::<SocketAddr>().unwrap()));
+        assert!(ips.contains(&format!("127.0.0.1:{}", port).parse::<SocketAddr>().unwrap()));
     }
 }

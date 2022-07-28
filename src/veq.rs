@@ -6,7 +6,7 @@ use thiserror::Error;
 use tokio::net::{ToSocketAddrs, UdpSocket};
 
 use crate::{
-    handler::Handler,
+    handler::{Handler, OneTimeId},
     ip_discovery::discover_ips,
     session::SessionId,
     snow_types::{SnowKeypair, SnowPublicKey, SnowPrivateKey},
@@ -81,7 +81,7 @@ impl VeqSocket {
     }
 
     pub async fn connect(&mut self, id: SessionId, info: ConnectionInfo) -> VeqSessionAlias {
-        {
+        let (id, one_time_id) = {
             match self.is_initiator(&info) {
                 true => self.handler.initiate(id, info).await,
                 false => self.handler.respond(id, info).await,
@@ -90,10 +90,11 @@ impl VeqSocket {
         .await;
         let remote_addr = self.handler.remote_addr(id).await.unwrap();
 
-        let delegate = BidirectionalSession {
+        let delegate = Arc::new(BidirectionalSession {
             id,
+            one_time_id,
             handler: self.handler.clone(),
-        };
+        });
         let delegate = Chunker::new(delegate, 1000);
         VeqSession {
             delegate,
@@ -108,14 +109,14 @@ pub enum VeqError {
     Disconnected,
 }
 
-#[derive(Clone)]
 pub struct BidirectionalSession {
     id: SessionId,
+    one_time_id: OneTimeId,
     handler: Handler,
 }
 
 #[async_trait]
-impl Bidirectional for BidirectionalSession {
+impl Bidirectional for Arc<BidirectionalSession> {
     async fn send(&mut self, data: Vec<u8>) -> Result<(), VeqError> {
         self.handler.send(self.id, data).await?;
         Ok(())
@@ -129,7 +130,7 @@ impl Bidirectional for BidirectionalSession {
 
 impl Drop for BidirectionalSession {
     fn drop(&mut self) {
-        self.handler.close_session(self.id);
+        self.handler.close_session(self.id, self.one_time_id);
     }
 }
 
@@ -151,4 +152,4 @@ impl<T: Bidirectional> VeqSession<T> {
     }
 }
 
-pub type VeqSessionAlias = VeqSession<Chunker<BidirectionalSession>>;
+pub type VeqSessionAlias = VeqSession<Chunker<Arc<BidirectionalSession>>>;

@@ -1,4 +1,5 @@
 #![feature(map_first_last)]
+#![feature(hash_drain_filter)]
 
 mod handler;
 mod ip_discovery;
@@ -22,7 +23,7 @@ mod tests {
         let id = Uuid::new_v4();
         let info1 = socket1.connection_info();
         let info2 = socket2.connection_info();
-        return join!(socket1.connect(id, info2), socket2.connect(id, info1),);
+        join!(socket1.connect(id, info2), socket2.connect(id, info1),)
     }
 
     #[tokio::test]
@@ -47,6 +48,26 @@ mod tests {
         conn2.send(data2.clone()).await.unwrap();
         let received2 = conn1.recv().await;
         assert_eq!(data2, received2.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_no_premature_drop() {
+        let (conn1_temp, mut conn2) = get_conns().await;
+        let mut conn1 = conn1_temp.clone();
+        drop(conn1_temp);
+
+        let data = vec![0, 1, 2, 3];
+        conn1.send(data.clone()).await.unwrap();
+        let received = conn2.recv().await;
+        assert_eq!(data, received.unwrap());
+
+        let data2 = vec![5, 6, 7, 8];
+        conn2.send(data2.clone()).await.unwrap();
+        let received2 = conn1.recv().await;
+        assert_eq!(data2, received2.unwrap());
+
+        drop(conn1);
+        assert!(conn2.recv().await.is_err());
     }
 
     #[tokio::test]

@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{HashMap},
     future::Future,
     net::SocketAddr,
     pin::Pin,
@@ -9,8 +9,9 @@ use std::{
 
 use tokio::sync::{
     mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
-    Mutex,
+    Mutex, broadcast::{self, Receiver},
 };
+use uuid::Uuid;
 
 use crate::{
     session::{
@@ -23,9 +24,9 @@ use crate::{
 
 pub type OneTimeId = SessionId;
 
-type PendingSessionPokerWakers = (PendingSessionPoker, Arc<std::sync::Mutex<Vec<Waker>>>);
-type PendingSessionInitiatorWakers = (PendingSessionInitiator, Arc<std::sync::Mutex<Vec<Waker>>>);
-type PendingSessionResponderWakers = (PendingSessionResponder, Arc<std::sync::Mutex<Vec<Waker>>>);
+type PendingSessionPokerWakers = (PendingSessionPoker, OneTimeId, broadcast::Sender<()>, Arc<std::sync::Mutex<Vec<Waker>>>);
+type PendingSessionInitiatorWakers = (PendingSessionInitiator, OneTimeId, broadcast::Sender<()>, Arc<std::sync::Mutex<Vec<Waker>>>);
+type PendingSessionResponderWakers = (PendingSessionResponder, OneTimeId, broadcast::Sender<()>, Arc<std::sync::Mutex<Vec<Waker>>>);
 
 #[derive(Clone)]
 pub struct Handler {
@@ -33,10 +34,8 @@ pub struct Handler {
     pending_sessions_poker: Arc<Mutex<HashMap<SessionId, PendingSessionPokerWakers>>>,
     pending_sessions_initiator: Arc<Mutex<HashMap<SessionId, PendingSessionInitiatorWakers>>>,
     pending_sessions_responder: Arc<Mutex<HashMap<SessionId, PendingSessionResponderWakers>>>,
-    established_sessions: Arc<Mutex<HashMap<SessionId, Session>>>,
-    alive_session_ids: Arc<std::sync::Mutex<HashSet<SessionId>>>,
+    established_sessions: Arc<Mutex<HashMap<SessionId, (OneTimeId, Session)>>>,
     keypair: Arc<SnowKeypair>,
-    one_time_ids: Arc<Mutex<HashMap<OneTimeId, SessionId>>>,
 }
 
 type PacketSender = UnboundedSender<(SocketAddr, SessionPacket, u32)>;
@@ -55,9 +54,7 @@ impl Handler {
                 pending_sessions_initiator: Arc::new(Mutex::new(HashMap::new())),
                 pending_sessions_responder: Arc::new(Mutex::new(HashMap::new())),
                 established_sessions: Arc::new(Mutex::new(HashMap::new())),
-                alive_session_ids: Arc::new(std::sync::Mutex::new(HashSet::new())),
                 keypair: Arc::new(keypair),
-                one_time_ids: Arc::new(Mutex::new(HashMap::new())),
             },
             outgoing_receiver,
         )
@@ -65,63 +62,54 @@ impl Handler {
     pub async fn handle_incoming(&mut self, src: SocketAddr, data: Vec<u8>) {
         let packet: SessionPacket = bincode::deserialize(&data[..]).unwrap();
         let id = packet.id;
-        if let Some((mut pending_session, wakers)) = {
+        if let Some((mut pending_session, one_time_id, sender, wakers)) = {
             let mut guard = self.pending_sessions_poker.lock().await;
             guard.remove(&packet.id)
         } {
             pending_session.handle_incoming(src, &packet).await;
             if pending_session.is_ready() {
-                match pending_session.responder().await {
-                    Some(session) => {
-                        let mut guard = self.pending_sessions_responder.lock().await;
-                        guard.insert(id, (session, wakers));
-                    }
-                    None => {}
+                if let Some(session) = pending_session.responder().await {
+                    let mut guard = self.pending_sessions_responder.lock().await;
+                    guard.insert(id, (session, one_time_id, sender, wakers));
                 }
             } else {
                 let mut guard = self.pending_sessions_poker.lock().await;
-                guard.insert(id, (pending_session, wakers));
+                guard.insert(id, (pending_session, one_time_id, sender, wakers));
             }
             return;
         }
-        if let Some((mut pending_session, wakers)) = {
+        if let Some((mut pending_session, one_time_id, sender, wakers)) = {
             let mut guard = self.pending_sessions_initiator.lock().await;
             guard.remove(&packet.id)
         } {
             pending_session.handle_incoming(src, &packet).await;
             if pending_session.is_ready() {
-                match pending_session.session().await {
-                    Some(session) => {
-                        self.upgrade_session(id, session, wakers).await;
-                    }
-                    None => {}
+                if let Some(session) = pending_session.session().await {
+                    self.upgrade_session(id, one_time_id, session, sender, wakers).await;
                 }
             } else {
                 let mut guard = self.pending_sessions_initiator.lock().await;
-                guard.insert(id, (pending_session, wakers));
+                guard.insert(id, (pending_session, one_time_id, sender, wakers));
             }
             return;
         }
-        if let Some((mut pending_session, wakers)) = {
+        if let Some((mut pending_session, one_time_id, sender, wakers)) = {
             let mut guard = self.pending_sessions_responder.lock().await;
             guard.remove(&packet.id)
         } {
             pending_session.handle_incoming(src, &packet).await;
             if pending_session.is_ready() {
-                match pending_session.session().await {
-                    Some(session) => {
-                        self.upgrade_session(id, session, wakers).await;
-                    }
-                    None => {}
+                if let Some(session) = pending_session.session().await {
+                    self.upgrade_session(id, one_time_id, session, sender, wakers).await;
                 }
             } else {
                 let mut guard = self.pending_sessions_responder.lock().await;
-                guard.insert(id, (pending_session, wakers));
+                guard.insert(id, (pending_session, one_time_id, sender, wakers));
             }
             return;
         }
         let mut established_sessions = self.established_sessions.lock().await;
-        if let Some(session) = established_sessions.get_mut(&packet.id) {
+        if let Some((_, session) )= established_sessions.get_mut(&packet.id) {
             session.handle_incoming(packet).await;
         }
     }
@@ -129,16 +117,17 @@ impl Handler {
     async fn upgrade_session(
         &self,
         id: SessionId,
+        one_time_id: OneTimeId,
         session: Session,
+        sender: broadcast::Sender<()>,
         wakers: Arc<std::sync::Mutex<Vec<Waker>>>,
     ) {
         {
-            let mut alive_session_guard = self.alive_session_ids.lock().unwrap();
-            alive_session_guard.insert(id);
-        }
-        {
             let mut established_sessions = self.established_sessions.lock().await;
-            established_sessions.insert(id, session);
+            established_sessions.insert(id, (one_time_id, session));
+        }
+        if let Err(e) = sender.send(()) {
+            log::warn!("Failed to send session ready notification: {}", e);
         }
         let waker_guard = wakers.lock().unwrap();
         waker_guard
@@ -147,9 +136,9 @@ impl Handler {
             .for_each(|w| w.wake_by_ref());
     }
 
-    pub async fn send(&mut self, id: SessionId, data: Vec<u8>) -> Result<(), VeqError> {
+    pub async fn send(&self, id: SessionId, data: Vec<u8>) -> Result<(), VeqError> {
         let mut established_sessions = self.established_sessions.lock().await;
-        if let Some(session) = established_sessions.get_mut(&id) {
+        if let Some((_, session)) = established_sessions.get_mut(&id) {
             if !session.send(data).await {
                 return Err(VeqError::Disconnected);
             }
@@ -158,10 +147,10 @@ impl Handler {
         Err(VeqError::Disconnected)
     }
 
-    pub async fn recv_from(&mut self, id: SessionId) -> Option<Receiving> {
+    pub async fn recv_from(&self, id: SessionId) -> Option<Receiving> {
         let mut established_sessions = self.established_sessions.lock().await;
         match established_sessions.get_mut(&id) {
-            Some(session) => {
+            Some((_, session)) => {
                 if session.is_dead() {
                     established_sessions.remove(&id);
                     return None;
@@ -176,57 +165,91 @@ impl Handler {
         let established_sessions = self.established_sessions.lock().await;
         established_sessions
             .get(&id)
-            .map(|session| session.remote_addr)
+            .map(|(_, session)| session.remote_addr)
     }
 
     pub async fn initiate(&mut self, id: SessionId, info: ConnectionInfo) -> SessionReady {
-        self.remove_session(id).await;
+        self.remove_session(id, None).await;
         let initiator = SnowInitiator::new(&self.keypair, &info.public_key);
         let pending =
             PendingSessionInitiator::new(self.outgoing_sender.clone(), id, info, initiator).await;
         let wakers = Arc::new(std::sync::Mutex::new(vec![]));
         let mut guard = self.pending_sessions_initiator.lock().await;
-        guard.insert(id, (pending, wakers.clone()));
-        SessionReady::new(id, wakers, self.alive_session_ids.clone())
+        let (sender, receiver) = broadcast::channel(10);
+
+        let one_time_id = Uuid::new_v4();
+        guard.insert(id, (pending, one_time_id, sender, wakers.clone()));
+        SessionReady::new(id, one_time_id, wakers, receiver)
     }
     pub async fn respond(&mut self, id: SessionId, info: ConnectionInfo) -> SessionReady {
-        self.remove_session(id).await;
+        self.remove_session(id, None).await;
         let responder = SnowResponder::new(&self.keypair, &info.public_key);
         let poking =
             PendingSessionPoker::new(self.outgoing_sender.clone(), id, info, responder).await;
         let wakers = Arc::new(std::sync::Mutex::new(vec![]));
         let mut guard = self.pending_sessions_poker.lock().await;
-        guard.insert(id, (poking, wakers.clone()));
-        SessionReady::new(id, wakers, self.alive_session_ids.clone())
+        let (sender, receiver) = broadcast::channel(10);
+        
+        let one_time_id = Uuid::new_v4();
+        guard.insert(id, (poking, one_time_id, sender, wakers.clone()));
+        SessionReady::new(id, one_time_id, wakers, receiver)
     }
 
-    pub fn close_session(&self, oneTimeId: SessionId) {
-        todo!("Implement closing sessions");
+    pub fn close_session(&self, id: SessionId, one_time_id: OneTimeId) {
+        let handler = self.clone();
         tokio::task::spawn(async move {
-            let mut guard = self.one_time_ids.lock().await;
+            handler.remove_session(id, Some(one_time_id)).await;
         });
     }
 
-    async fn remove_session(&self, id: SessionId) {
+    async fn remove_session(&self, id: SessionId, one_time_id: Option<OneTimeId>) {
         {
             let mut pokers = self.pending_sessions_poker.lock().await;
-            pokers.remove(&id);
+            if let Some(one_time_id) = &one_time_id {
+                if let Some((_, current_one_time_id, _, _)) = pokers.get(&id){
+                    if one_time_id == current_one_time_id {
+                        pokers.remove(&id);
+                    }
+                }
+            } else {
+                pokers.remove(&id);
+            }
         }
         {
             let mut initiating = self.pending_sessions_initiator.lock().await;
-            initiating.remove(&id);
+            if let Some(one_time_id) = &one_time_id {
+                if let Some((_, current_one_time_id, _, _)) = initiating.get(&id){
+                    if one_time_id == current_one_time_id {
+                        initiating.remove(&id);
+                    }
+                }
+            } else {
+                initiating.remove(&id);
+            }
         }
         {
             let mut responding = self.pending_sessions_responder.lock().await;
-            responding.remove(&id);
+            if let Some(one_time_id) = &one_time_id {
+                if let Some((_, current_one_time_id, _, _)) = responding.get(&id){
+                    if one_time_id == current_one_time_id {
+                        responding.remove(&id);
+                    }
+                }
+            } else {
+                responding.remove(&id);
+            }
         }
         {
             let mut established = self.established_sessions.lock().await;
-            established.remove(&id);
-        }
-        {
-            let mut alive_session_guard = self.alive_session_ids.lock().unwrap();
-            alive_session_guard.remove(&id);
+            if let Some(one_time_id) = &one_time_id {
+                if let Some((current_one_time_id, _)) = established.get(&id){
+                    if one_time_id == current_one_time_id {
+                        established.remove(&id);
+                    }
+                }
+            } else {
+                established.remove(&id);
+            }
         }
     }
 }
@@ -234,35 +257,36 @@ impl Handler {
 #[derive(Debug)]
 pub struct SessionReady {
     id: SessionId,
+    one_time_id: OneTimeId,
     wakers: Arc<std::sync::Mutex<Vec<Waker>>>,
     added_waker: bool,
-    alive_session_ids: Arc<std::sync::Mutex<HashSet<SessionId>>>,
+    receiver: Receiver<()>,
 }
 
 impl SessionReady {
     pub fn new(
         id: SessionId,
+        one_time_id: OneTimeId,
         wakers: Arc<std::sync::Mutex<Vec<Waker>>>,
-        alive_session_ids: Arc<std::sync::Mutex<HashSet<SessionId>>>,
+        receiver: Receiver<()>,
     ) -> SessionReady {
         SessionReady {
             id,
+            one_time_id,
             wakers,
             added_waker: false,
-            alive_session_ids,
+            receiver,
         }
     }
 }
 
 impl Future for SessionReady {
-    type Output = SessionId;
+    type Output = (SessionId, OneTimeId);
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let guard = self.alive_session_ids.lock().unwrap();
-        if guard.contains(&self.id) {
-            return Poll::Ready(self.id);
+        if self.receiver.try_recv().is_ok() {
+            return Poll::Ready((self.id, self.one_time_id));
         }
-        drop(guard);
         if !self.added_waker {
             {
                 let mut wakers_guard = self.wakers.lock().unwrap();

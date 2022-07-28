@@ -63,7 +63,8 @@ async fn main() {
         }
     });
 
-    for line in stdin.lock().lines() {
+    let lines = std::io::stdin().lock().lines();
+    for line in lines {
         let mut data = Vec::new();
         line.unwrap().as_bytes().read_to_end(&mut data).unwrap();
         conn.send(data).await.unwrap();
