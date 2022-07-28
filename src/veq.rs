@@ -13,7 +13,7 @@ use crate::{
     transform::{Bidirectional, Chunker},
 };
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ConnectionInfo {
     pub addresses: HashSet<SocketAddr>,
     pub public_key: SnowPublicKey,
