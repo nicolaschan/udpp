@@ -14,7 +14,7 @@ mod tests {
     use tokio::join;
     use uuid::Uuid;
 
-    use crate::veq::{VeqSessionAlias, VeqSocket};
+    use crate::{veq::{VeqSessionAlias, VeqSocket}, snow_types::SnowKeypair};
 
     async fn get_conns() -> (VeqSessionAlias, VeqSessionAlias) {
         let mut socket1 = VeqSocket::bind("0.0.0.0:0").await.unwrap();
@@ -129,5 +129,14 @@ mod tests {
         let (conn1, mut conn2) = get_conns().await;
         drop(conn1);
         assert!(conn2.recv().await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_bind_with_key() {
+        let keypair = SnowKeypair::new();
+        let socket1 = VeqSocket::bind_with_keypair("0.0.0.0:0", keypair.clone()).await.unwrap();
+        let socket2 = VeqSocket::bind_with_keypair("0.0.0.0:0", keypair).await.unwrap();
+
+        assert_eq!(socket1.connection_info().public_key, socket2.connection_info().public_key);
     }
 }

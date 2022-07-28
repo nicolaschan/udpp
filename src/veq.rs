@@ -9,7 +9,7 @@ use crate::{
     handler::{Handler, OneTimeId},
     ip_discovery::discover_ips,
     session::SessionId,
-    snow_types::{SnowKeypair, SnowPublicKey, SnowPrivateKey},
+    snow_types::{SnowKeypair, SnowPublicKey},
     transform::{Bidirectional, Chunker},
 };
 
@@ -22,23 +22,22 @@ pub struct ConnectionInfo {
 #[derive(Clone)]
 pub struct VeqSocket {
     connection_info: ConnectionInfo,
-    private_key: SnowPrivateKey,
+    keypair: SnowKeypair,
     handler: Handler,
 }
 
 impl VeqSocket {
     pub async fn bind<A: ToSocketAddrs>(addrs: A) -> Result<VeqSocket, Error> {
-        let private_key = SnowKeypair::new().private();
-        VeqSocket::bind_with_key(addrs, private_key).await
+        let keypair = SnowKeypair::new();
+        VeqSocket::bind_with_keypair(addrs, keypair).await
     }
-    pub async fn bind_with_key<A: ToSocketAddrs>(addrs: A, private_key: SnowPrivateKey) -> Result<VeqSocket, Error> {
+    pub async fn bind_with_keypair<A: ToSocketAddrs>(addrs: A, keypair: SnowKeypair) -> Result<VeqSocket, Error> {
         let socket = Arc::new(UdpSocket::bind(addrs).await?);
-        let keypair = SnowKeypair::from_private(&private_key);
         let connection_info = ConnectionInfo {
             addresses: discover_ips(&socket).await,
             public_key: keypair.public(),
         };
-        let (handler, mut outgoing_receiver) = Handler::new(keypair);
+        let (handler, mut outgoing_receiver) = Handler::new(keypair.clone());
 
         let receiver = socket.clone();
         let mut handler_recv = handler.clone();
@@ -63,7 +62,7 @@ impl VeqSocket {
         });
         Ok(VeqSocket {
             connection_info,
-            private_key,
+            keypair,
             handler,
         })
     }
@@ -76,8 +75,8 @@ impl VeqSocket {
         self.connection_info.public_key < info.public_key
     }
 
-    pub fn private_key(&self) -> SnowPrivateKey {
-        self.private_key.clone()
+    pub fn keypair(&self) -> SnowKeypair {
+        self.keypair.clone()
     }
 
     pub async fn connect(&mut self, id: SessionId, info: ConnectionInfo) -> VeqSessionAlias {

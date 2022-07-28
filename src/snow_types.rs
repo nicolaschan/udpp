@@ -1,7 +1,7 @@
 use std::{collections::BTreeSet, hash::Hash, sync::Arc};
 
 use serde::{Deserialize, Serialize};
-use snow::{Builder, HandshakeState, Keypair, StatelessTransportState};
+use snow::{Builder, HandshakeState, StatelessTransportState};
 use tokio::sync::Mutex;
 
 static NOISE_PARAMS: &str = "Noise_KK_25519_ChaChaPoly_BLAKE2s";
@@ -72,33 +72,27 @@ impl LossyTransportState {
     }
 }
 
-pub struct SnowKeypair(Keypair);
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub struct SnowKeypair(SnowPublicKey, SnowPrivateKey);
 #[derive(Clone, Debug, Serialize, Deserialize, PartialOrd, Eq, PartialEq, Hash)]
 pub struct SnowPublicKey(Vec<u8>);
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialOrd, Eq, PartialEq, Hash)]
 pub struct SnowPrivateKey(Vec<u8>);
 
 impl SnowKeypair {
     pub fn new() -> SnowKeypair {
         let keypair = builder().generate_keypair().unwrap();
-        SnowKeypair(keypair)
-    }
-    pub fn from_private(private: &SnowPrivateKey) -> SnowKeypair {
-        let keypair = builder()
-            .local_private_key(&private.0)
-            .generate_keypair()
-            .unwrap();
-        SnowKeypair(keypair)
+        SnowKeypair(SnowPublicKey(keypair.public.clone()), SnowPrivateKey(keypair.private))
     }
     pub fn public(&self) -> SnowPublicKey {
-        SnowPublicKey(self.0.public.clone())
+        self.0.clone()
     }
     pub fn private(&self) -> SnowPrivateKey {
-        SnowPrivateKey(self.0.private.clone())
+        self.1.clone()
     }
     pub fn builder(&self) -> Builder<'_> {
-        builder().local_private_key(&self.0.private)
+        builder().local_private_key(&self.1.0)
     }
 }
 
