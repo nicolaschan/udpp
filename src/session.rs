@@ -372,7 +372,6 @@ impl Session {
         }
     }
     pub async fn handle_incoming(&mut self, packet: SessionPacket) {
-        self.heartbeat.store(true, Ordering::Release);
         match bincode::deserialize::<RawMessage>(&packet.data).unwrap() {
             RawMessage::HandshakePoke => {}
             RawMessage::HandshakeInitiation(_) => {}
@@ -383,7 +382,9 @@ impl Session {
                 if let Ok(len) = guard.read_message(&encrypted, &mut data).await {
                     if let Ok(message) = bincode::deserialize::<Message>(&data[..len]) {
                         match message {
-                            Message::Keepalive => {}
+                            Message::Keepalive => {
+                                self.heartbeat.store(true, Ordering::Release);
+                            }
                             Message::Payload(data) => {
                                 self.messages_sender.send(data).unwrap();
                                 let mut wakers_guard = self.wakers.lock().unwrap();

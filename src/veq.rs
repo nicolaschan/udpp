@@ -55,7 +55,7 @@ impl VeqSocket {
                     let serialized = bincode::serialize(&packet).unwrap();
                     socket.set_ttl(ttl).unwrap();
                     if let Err(_e) = socket.send_to(&serialized[..], dest).await {
-                        // eprintln!("Error sending packet: {}", e);
+                        log::error!("Failed to send packet to {}", dest);
                     }
                 }
             }
@@ -122,7 +122,9 @@ impl Bidirectional for Arc<BidirectionalSession> {
     }
 
     async fn recv(&mut self) -> Result<Vec<u8>, VeqError> {
-        let future = { self.handler.recv_from(self.id).await.unwrap() };
+        let future = { 
+            self.handler.recv_from(self.id).await.ok_or(VeqError::Disconnected)?
+        };
         future.await
     }
 }
