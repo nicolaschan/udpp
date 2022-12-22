@@ -198,7 +198,7 @@ impl Handler {
 
         let one_time_id = Uuid::new_v4();
         guard.insert(id, (pending, one_time_id, sender, wakers.clone()));
-        SessionReady::new(id, one_time_id, wakers, receiver)
+        SessionReady::new(id, one_time_id, wakers, receiver, self.clone())
     }
     pub async fn respond(&mut self, id: SessionId, info: ConnectionInfo) -> SessionReady {
         self.remove_session(id, None).await;
@@ -211,7 +211,7 @@ impl Handler {
 
         let one_time_id = Uuid::new_v4();
         guard.insert(id, (poking, one_time_id, sender, wakers.clone()));
-        SessionReady::new(id, one_time_id, wakers, receiver)
+        SessionReady::new(id, one_time_id, wakers, receiver, self.clone())
     }
 
     pub fn close_session(&self, id: SessionId, one_time_id: OneTimeId) {
@@ -336,13 +336,14 @@ impl Handler {
     }
 }
 
-#[derive(Debug)]
 pub struct SessionReady {
     id: SessionId,
     one_time_id: OneTimeId,
     wakers: Arc<std::sync::Mutex<Vec<Waker>>>,
     added_waker: bool,
     receiver: Receiver<()>,
+    handler: Handler,
+    completed: Arc<std::sync::Mutex<bool>>,
 }
 
 impl SessionReady {
@@ -351,6 +352,7 @@ impl SessionReady {
         one_time_id: OneTimeId,
         wakers: Arc<std::sync::Mutex<Vec<Waker>>>,
         receiver: Receiver<()>,
+        handler: Handler,
     ) -> SessionReady {
         SessionReady {
             id,
@@ -358,6 +360,8 @@ impl SessionReady {
             wakers,
             added_waker: false,
             receiver,
+            handler,
+            completed: Arc::new(std::sync::Mutex::new(false)),
         }
     }
 }
@@ -367,6 +371,8 @@ impl Future for SessionReady {
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         if self.receiver.try_recv().is_ok() {
+            let mut completed_guard = self.completed.lock().unwrap();
+            *completed_guard = true;
             return Poll::Ready((self.id, self.one_time_id));
         }
         if !self.added_waker {
@@ -377,5 +383,14 @@ impl Future for SessionReady {
             self.added_waker = true;
         }
         Poll::Pending
+    }
+}
+
+impl Drop for SessionReady {
+    fn drop(&mut self) {
+        let completed = *self.completed.lock().unwrap();
+        if !completed {
+            self.handler.close_session(self.id, self.one_time_id);
+        }
     }
 }
