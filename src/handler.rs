@@ -252,7 +252,12 @@ impl Handler {
                             "Removing responding session id={:?} one_time_id={:?}",
                             id, one_time_id
                         );
-                        responder.remove(&id);
+                        responder
+                            .remove(&id)
+                            .map(|(mut r, _id, _sender, _waker)| {
+                                r.abort();
+                                (r, _id, _sender, _waker)
+                            });
                     }
                 }
             } else {
@@ -260,7 +265,12 @@ impl Handler {
                     "Removing responding session id={:?} one_time_id={:?}",
                     id, one_time_id
                 );
-                responder.remove(&id);
+                responder
+                    .remove(&id)
+                    .map(|(mut r, _id, _sender, _waker)| {
+                        r.abort();
+                        (r, _id, _sender, _waker)
+                    });
             }
         }
         {
@@ -272,7 +282,12 @@ impl Handler {
                             "Removing poker session id={:?} one_time_id={:?}",
                             id, one_time_id
                         );
-                        pokers.remove(&id);
+                        pokers
+                            .remove(&id)
+                            .map(|(mut r, _id, _sender, _waker)| {
+                                r.abort();
+                                (r, _id, _sender, _waker)
+                            });
                     }
                 }
             } else {
@@ -280,7 +295,12 @@ impl Handler {
                     "Removing poker session id={:?} one_time_id={:?}",
                     id, one_time_id
                 );
-                pokers.remove(&id);
+                pokers
+                    .remove(&id)
+                    .map(|(mut r, _id, _sender, _waker)| {
+                        r.abort();
+                        (r, _id, _sender, _waker)
+                    });
             }
         }
         {
@@ -292,7 +312,12 @@ impl Handler {
                             "Removing initiating session id={:?} one_time_id={:?}",
                             id, one_time_id
                         );
-                        initiating.remove(&id);
+                        initiating
+                            .remove(&id)
+                            .map(|(mut r, _id, _sender, _waker)| {
+                                r.abort();
+                                (r, _id, _sender, _waker)
+                            });
                     }
                 }
             } else {
@@ -300,55 +325,12 @@ impl Handler {
                     "Removing initiating session id={:?} one_time_id={:?}",
                     id, one_time_id
                 );
-                initiating.remove(&id);
-            }
-        }
-        {
-            let mut pokers = self.pending_sessions_poker.lock().await;
-            if let Some(one_time_id) = &one_time_id {
-                if let Some((_, current_one_time_id, _, _)) = pokers.get(&id) {
-                    if one_time_id == current_one_time_id {
-                        pokers.remove(&id);
-                    }
-                }
-            } else {
-                pokers.remove(&id);
-            }
-        }
-        {
-            let mut initiating = self.pending_sessions_initiator.lock().await;
-            if let Some(one_time_id) = &one_time_id {
-                if let Some((_, current_one_time_id, _, _)) = initiating.get(&id) {
-                    if one_time_id == current_one_time_id {
-                        initiating.remove(&id);
-                    }
-                }
-            } else {
-                initiating.remove(&id);
-            }
-        }
-        {
-            let mut responding = self.pending_sessions_responder.lock().await;
-            if let Some(one_time_id) = &one_time_id {
-                if let Some((_, current_one_time_id, _, _)) = responding.get(&id) {
-                    if one_time_id == current_one_time_id {
-                        responding.remove(&id);
-                    }
-                }
-            } else {
-                responding.remove(&id);
-            }
-        }
-        {
-            let mut established = self.established_sessions.lock().await;
-            if let Some(one_time_id) = &one_time_id {
-                if let Some((current_one_time_id, _)) = established.get(&id) {
-                    if one_time_id == current_one_time_id {
-                        established.remove(&id);
-                    }
-                }
-            } else {
-                established.remove(&id);
+                initiating
+                    .remove(&id)
+                    .map(|(mut r, _id, _sender, _waker)| {
+                        r.abort();
+                        (r, _id, _sender, _waker)
+                    });
             }
         }
     }

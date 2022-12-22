@@ -123,6 +123,10 @@ impl PendingSessionPoker {
         }
         None
     }
+
+    pub fn abort(&mut self) {
+        self.handle.abort();
+    }
 }
 
 pub struct PendingSessionInitiator {
@@ -196,6 +200,10 @@ impl PendingSessionInitiator {
             ));
         }
         None
+    }
+
+    pub fn abort(&mut self) {
+        self.handle.abort();
     }
 }
 
@@ -280,6 +288,10 @@ impl PendingSessionResponder {
             ));
         }
         None
+    }
+
+    pub fn abort(&mut self) {
+        self.handle.abort();
     }
 }
 
