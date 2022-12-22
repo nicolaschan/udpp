@@ -1,5 +1,5 @@
 use std::{
-    collections::{VecDeque, BTreeMap},
+    collections::{BTreeMap, VecDeque},
     iter,
     sync::Arc,
 };

@@ -1,4 +1,3 @@
-#![feature(map_first_last)]
 #![feature(hash_drain_filter)]
 
 mod handler;
@@ -11,10 +10,14 @@ pub mod veq;
 
 #[cfg(test)]
 mod tests {
+
     use tokio::join;
     use uuid::Uuid;
 
-    use crate::{veq::{VeqSessionAlias, VeqSocket}, snow_types::SnowKeypair};
+    use crate::{
+        snow_types::SnowKeypair,
+        veq::{VeqSessionAlias, VeqSocket},
+    };
 
     async fn get_conns() -> (VeqSessionAlias, VeqSessionAlias) {
         let mut socket1 = VeqSocket::bind("0.0.0.0:0").await.unwrap();
@@ -115,17 +118,15 @@ mod tests {
         drop(session1);
         drop(session2);
 
-        let (mut session1, mut session2) = join!(
-            socket1.connect(id, info2),
-            socket2.connect(id, info1),
-        );
+        let (mut session1, mut session2) =
+            join!(socket1.connect(id, info2), socket2.connect(id, info1),);
 
         session1.send(vec![4, 5, 6, 7]).await.unwrap();
         assert_eq!(vec![4, 5, 6, 7], session2.recv().await.unwrap());
     }
 
     #[tokio::test]
-    async fn test_session_drop() {
+    async fn test_drop_session() {
         let (conn1, mut conn2) = get_conns().await;
         drop(conn1);
         assert!(conn2.recv().await.is_err());
@@ -134,9 +135,16 @@ mod tests {
     #[tokio::test]
     async fn test_bind_with_key() {
         let keypair = SnowKeypair::new();
-        let socket1 = VeqSocket::bind_with_keypair("0.0.0.0:0", keypair.clone()).await.unwrap();
-        let socket2 = VeqSocket::bind_with_keypair("0.0.0.0:0", keypair).await.unwrap();
+        let socket1 = VeqSocket::bind_with_keypair("0.0.0.0:0", keypair.clone())
+            .await
+            .unwrap();
+        let socket2 = VeqSocket::bind_with_keypair("0.0.0.0:0", keypair)
+            .await
+            .unwrap();
 
-        assert_eq!(socket1.connection_info().public_key, socket2.connection_info().public_key);
+        assert_eq!(
+            socket1.connection_info().public_key,
+            socket2.connection_info().public_key
+        );
     }
 }

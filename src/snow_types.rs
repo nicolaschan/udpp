@@ -49,7 +49,7 @@ impl LossyTransportState {
             *d = *s;
         }
         let len = serialized.len();
-        Ok(len as usize)
+        Ok(len)
     }
     pub async fn read_message(
         &mut self,
@@ -83,7 +83,10 @@ pub struct SnowPrivateKey(Vec<u8>);
 impl SnowKeypair {
     pub fn new() -> SnowKeypair {
         let keypair = builder().generate_keypair().unwrap();
-        SnowKeypair(SnowPublicKey(keypair.public.clone()), SnowPrivateKey(keypair.private))
+        SnowKeypair(
+            SnowPublicKey(keypair.public.clone()),
+            SnowPrivateKey(keypair.private),
+        )
     }
     pub fn public(&self) -> SnowPublicKey {
         self.0.clone()
@@ -92,7 +95,7 @@ impl SnowKeypair {
         self.1.clone()
     }
     pub fn builder(&self) -> Builder<'_> {
-        builder().local_private_key(&self.1.0)
+        builder().local_private_key(&self.1 .0)
     }
 }
 
@@ -143,7 +146,10 @@ impl SnowResponder {
             .unwrap();
         SnowResponder(state)
     }
-    pub fn response(mut self, initiation: SnowInitiation) -> Result<(LossyTransportState, SnowResponse), snow::Error> {
+    pub fn response(
+        mut self,
+        initiation: SnowInitiation,
+    ) -> Result<(LossyTransportState, SnowResponse), snow::Error> {
         let mut temp = [0u8; 65535];
         self.0.read_message(&initiation.0, &mut temp)?;
         let mut buf = [0u8; 65535];

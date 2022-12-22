@@ -42,7 +42,7 @@ async fn main() {
     let stdin = std::io::stdin();
     let mut peer_data_emoji = String::new();
     stdin.lock().read_line(&mut peer_data_emoji).unwrap();
-    let peer_data_emoji = peer_data_emoji.replace('\n', "").replace(' ', "");
+    let peer_data_emoji = peer_data_emoji.replace(['\n', ' '], "");
     let peer_data_compressed = base64::decode(peer_data_emoji).unwrap();
     let mut peer_data_serialized = Vec::new();
     zstd::stream::copy_decode(&peer_data_compressed[..], &mut peer_data_serialized).unwrap();

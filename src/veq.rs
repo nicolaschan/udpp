@@ -31,7 +31,10 @@ impl VeqSocket {
         let keypair = SnowKeypair::new();
         VeqSocket::bind_with_keypair(addrs, keypair).await
     }
-    pub async fn bind_with_keypair<A: ToSocketAddrs>(addrs: A, keypair: SnowKeypair) -> Result<VeqSocket, Error> {
+    pub async fn bind_with_keypair<A: ToSocketAddrs>(
+        addrs: A,
+        keypair: SnowKeypair,
+    ) -> Result<VeqSocket, Error> {
         let socket = Arc::new(UdpSocket::bind(addrs).await?);
         let connection_info = ConnectionInfo {
             addresses: discover_ips(&socket).await,
@@ -122,8 +125,11 @@ impl Bidirectional for Arc<BidirectionalSession> {
     }
 
     async fn recv(&mut self) -> Result<Vec<u8>, VeqError> {
-        let future = { 
-            self.handler.recv_from(self.id).await.ok_or(VeqError::Disconnected)?
+        let future = {
+            self.handler
+                .recv_from(self.id)
+                .await
+                .ok_or(VeqError::Disconnected)?
         };
         future.await
     }

@@ -1,6 +1,6 @@
 use std::{
     collections::HashSet,
-    net::{SocketAddr, ToSocketAddrs, Ipv4Addr},
+    net::{Ipv4Addr, SocketAddr, ToSocketAddrs},
 };
 
 use pnet::datalink;
@@ -61,9 +61,7 @@ pub async fn discover_ips(socket: &UdpSocket) -> HashSet<SocketAddr> {
     ips.extend(&public_v4(socket).await);
     ips.extend(&public_v6(socket).await);
 
-    ips.drain_filter(|x| {
-        x.ip() == Ipv4Addr::new(0, 0, 0, 0)
-    });
+    ips.drain_filter(|x| x.ip() == Ipv4Addr::new(0, 0, 0, 0));
 
     ips
 }
@@ -71,8 +69,8 @@ pub async fn discover_ips(socket: &UdpSocket) -> HashSet<SocketAddr> {
 #[cfg(test)]
 mod tests {
     use super::discover_ips;
-    use tokio::net::UdpSocket;
     use std::net::SocketAddr;
+    use tokio::net::UdpSocket;
 
     #[tokio::test]
     async fn test_ifs() {

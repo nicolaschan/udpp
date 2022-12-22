@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap},
+    collections::HashMap,
     future::Future,
     net::SocketAddr,
     pin::Pin,
@@ -7,9 +7,11 @@ use std::{
     task::{Context, Poll, Waker},
 };
 
+use log::debug;
 use tokio::sync::{
+    broadcast::{self, Receiver},
     mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
-    Mutex, broadcast::{self, Receiver},
+    Mutex,
 };
 use uuid::Uuid;
 
@@ -24,9 +26,24 @@ use crate::{
 
 pub type OneTimeId = SessionId;
 
-type PendingSessionPokerWakers = (PendingSessionPoker, OneTimeId, broadcast::Sender<()>, Arc<std::sync::Mutex<Vec<Waker>>>);
-type PendingSessionInitiatorWakers = (PendingSessionInitiator, OneTimeId, broadcast::Sender<()>, Arc<std::sync::Mutex<Vec<Waker>>>);
-type PendingSessionResponderWakers = (PendingSessionResponder, OneTimeId, broadcast::Sender<()>, Arc<std::sync::Mutex<Vec<Waker>>>);
+type PendingSessionPokerWakers = (
+    PendingSessionPoker,
+    OneTimeId,
+    broadcast::Sender<()>,
+    Arc<std::sync::Mutex<Vec<Waker>>>,
+);
+type PendingSessionInitiatorWakers = (
+    PendingSessionInitiator,
+    OneTimeId,
+    broadcast::Sender<()>,
+    Arc<std::sync::Mutex<Vec<Waker>>>,
+);
+type PendingSessionResponderWakers = (
+    PendingSessionResponder,
+    OneTimeId,
+    broadcast::Sender<()>,
+    Arc<std::sync::Mutex<Vec<Waker>>>,
+);
 
 #[derive(Clone)]
 pub struct Handler {
@@ -85,7 +102,8 @@ impl Handler {
             pending_session.handle_incoming(src, &packet).await;
             if pending_session.is_ready() {
                 if let Some(session) = pending_session.session().await {
-                    self.upgrade_session(id, one_time_id, session, sender, wakers).await;
+                    self.upgrade_session(id, one_time_id, session, sender, wakers)
+                        .await;
                 }
             } else {
                 let mut guard = self.pending_sessions_initiator.lock().await;
@@ -100,7 +118,8 @@ impl Handler {
             pending_session.handle_incoming(src, &packet).await;
             if pending_session.is_ready() {
                 if let Some(session) = pending_session.session().await {
-                    self.upgrade_session(id, one_time_id, session, sender, wakers).await;
+                    self.upgrade_session(id, one_time_id, session, sender, wakers)
+                        .await;
                 }
             } else {
                 let mut guard = self.pending_sessions_responder.lock().await;
@@ -109,7 +128,7 @@ impl Handler {
             return;
         }
         let mut established_sessions = self.established_sessions.lock().await;
-        if let Some((_, session) )= established_sessions.get_mut(&packet.id) {
+        if let Some((_, session)) = established_sessions.get_mut(&packet.id) {
             session.handle_incoming(packet).await;
         }
     }
@@ -156,7 +175,7 @@ impl Handler {
                     return None;
                 }
                 session.recv()
-            },
+            }
             None => None,
         }
     }
@@ -189,7 +208,7 @@ impl Handler {
         let wakers = Arc::new(std::sync::Mutex::new(vec![]));
         let mut guard = self.pending_sessions_poker.lock().await;
         let (sender, receiver) = broadcast::channel(10);
-        
+
         let one_time_id = Uuid::new_v4();
         guard.insert(id, (poking, one_time_id, sender, wakers.clone()));
         SessionReady::new(id, one_time_id, wakers, receiver)
@@ -203,10 +222,91 @@ impl Handler {
     }
 
     async fn remove_session(&self, id: SessionId, one_time_id: Option<OneTimeId>) {
+        debug!("Removing session id={:?} one_time_id={:?}", id, one_time_id);
+        {
+            let mut established_sessions = self.established_sessions.lock().await;
+            if let Some(one_time_id) = &one_time_id {
+                if let Some((current_one_time_id, _)) = established_sessions.get(&id) {
+                    if one_time_id == current_one_time_id {
+                        debug!(
+                            "Removing established session id={:?} one_time_id={:?}",
+                            id, one_time_id
+                        );
+                        established_sessions.remove(&id);
+                    }
+                }
+            } else {
+                debug!(
+                    "Removing established session id={:?} one_time_id={:?}",
+                    id, one_time_id
+                );
+                established_sessions.remove(&id);
+            }
+        }
+        {
+            let mut responder = self.pending_sessions_responder.lock().await;
+            if let Some(one_time_id) = &one_time_id {
+                if let Some((_, current_one_time_id, _, _)) = responder.get(&id) {
+                    if one_time_id == current_one_time_id {
+                        debug!(
+                            "Removing responding session id={:?} one_time_id={:?}",
+                            id, one_time_id
+                        );
+                        responder.remove(&id);
+                    }
+                }
+            } else {
+                debug!(
+                    "Removing responding session id={:?} one_time_id={:?}",
+                    id, one_time_id
+                );
+                responder.remove(&id);
+            }
+        }
         {
             let mut pokers = self.pending_sessions_poker.lock().await;
             if let Some(one_time_id) = &one_time_id {
-                if let Some((_, current_one_time_id, _, _)) = pokers.get(&id){
+                if let Some((_, current_one_time_id, _, _)) = pokers.get(&id) {
+                    if one_time_id == current_one_time_id {
+                        debug!(
+                            "Removing poker session id={:?} one_time_id={:?}",
+                            id, one_time_id
+                        );
+                        pokers.remove(&id);
+                    }
+                }
+            } else {
+                debug!(
+                    "Removing poker session id={:?} one_time_id={:?}",
+                    id, one_time_id
+                );
+                pokers.remove(&id);
+            }
+        }
+        {
+            let mut initiating = self.pending_sessions_initiator.lock().await;
+            if let Some(one_time_id) = &one_time_id {
+                if let Some((_, current_one_time_id, _, _)) = initiating.get(&id) {
+                    if one_time_id == current_one_time_id {
+                        debug!(
+                            "Removing initiating session id={:?} one_time_id={:?}",
+                            id, one_time_id
+                        );
+                        initiating.remove(&id);
+                    }
+                }
+            } else {
+                debug!(
+                    "Removing initiating session id={:?} one_time_id={:?}",
+                    id, one_time_id
+                );
+                initiating.remove(&id);
+            }
+        }
+        {
+            let mut pokers = self.pending_sessions_poker.lock().await;
+            if let Some(one_time_id) = &one_time_id {
+                if let Some((_, current_one_time_id, _, _)) = pokers.get(&id) {
                     if one_time_id == current_one_time_id {
                         pokers.remove(&id);
                     }
@@ -218,7 +318,7 @@ impl Handler {
         {
             let mut initiating = self.pending_sessions_initiator.lock().await;
             if let Some(one_time_id) = &one_time_id {
-                if let Some((_, current_one_time_id, _, _)) = initiating.get(&id){
+                if let Some((_, current_one_time_id, _, _)) = initiating.get(&id) {
                     if one_time_id == current_one_time_id {
                         initiating.remove(&id);
                     }
@@ -230,7 +330,7 @@ impl Handler {
         {
             let mut responding = self.pending_sessions_responder.lock().await;
             if let Some(one_time_id) = &one_time_id {
-                if let Some((_, current_one_time_id, _, _)) = responding.get(&id){
+                if let Some((_, current_one_time_id, _, _)) = responding.get(&id) {
                     if one_time_id == current_one_time_id {
                         responding.remove(&id);
                     }
@@ -242,7 +342,7 @@ impl Handler {
         {
             let mut established = self.established_sessions.lock().await;
             if let Some(one_time_id) = &one_time_id {
-                if let Some((current_one_time_id, _)) = established.get(&id){
+                if let Some((current_one_time_id, _)) = established.get(&id) {
                     if one_time_id == current_one_time_id {
                         established.remove(&id);
                     }
