@@ -61,7 +61,7 @@ pub async fn discover_ips(socket: &UdpSocket) -> HashSet<SocketAddr> {
     ips.extend(&public_v4(socket).await);
     ips.extend(&public_v6(socket).await);
 
-    ips.drain_filter(|x| x.ip() == Ipv4Addr::new(0, 0, 0, 0));
+    ips.retain(|x| x.ip() != Ipv4Addr::new(0, 0, 0, 0));
 
     ips
 }

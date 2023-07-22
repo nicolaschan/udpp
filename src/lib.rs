@@ -1,5 +1,3 @@
-#![feature(hash_drain_filter)]
-
 mod handler;
 mod ip_discovery;
 mod session;
