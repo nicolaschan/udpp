@@ -89,7 +89,6 @@ mod tests {
     async fn test_large_payload() {
         let (mut conn1, mut conn2) = get_conns().await;
         let data: Vec<u8> = (1..655350)
-            .into_iter()
             .map(|n: usize| (n % 256) as u8)
             .collect();
         conn1.send(data.clone()).await.unwrap();

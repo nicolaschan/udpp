@@ -125,10 +125,10 @@ impl SnowInitiator {
     pub fn initiation(&self) -> SnowInitiation {
         self.1.clone()
     }
-    pub fn receive_response(mut self, response: SnowResponse) -> LossyTransportState {
+    pub fn receive_response(mut self, response: SnowResponse) -> Result<LossyTransportState, snow::Error> {
         let mut buf = [0u8; 65535];
-        self.0.read_message(&response.0, &mut buf).unwrap();
-        LossyTransportState::from_stateless(self.0.into_stateless_transport_mode().unwrap())
+        self.0.read_message(&response.0, &mut buf)?;
+        Ok(LossyTransportState::from_stateless(self.0.into_stateless_transport_mode().unwrap()))
     }
 }
 
@@ -176,7 +176,7 @@ mod tests {
 
         let initiation = initiator.initiation();
         let (mut transport2, response) = responder.response(initiation).unwrap();
-        let mut transport1 = initiator.receive_response(response);
+        let mut transport1 = initiator.receive_response(response).unwrap();
 
         let data = vec![1, 2, 3, 4];
         let mut encrypted_buf = [0u8; 65535];
@@ -215,7 +215,7 @@ mod tests {
 
         let initiation = initiator.initiation();
         let (mut transport2, response) = responder.response(initiation).unwrap();
-        let mut transport1 = initiator.receive_response(response);
+        let mut transport1 = initiator.receive_response(response).unwrap();
 
         let data = vec![1, 2, 3, 4];
         let mut encrypted_buf = [0u8; 65535];
@@ -254,7 +254,7 @@ mod tests {
 
         let initiation = initiator.initiation();
         let (mut transport2, response) = responder.response(initiation).unwrap();
-        let mut transport1 = initiator.receive_response(response);
+        let mut transport1 = initiator.receive_response(response).unwrap();
 
         let data = vec![1, 2, 3, 4];
         let mut encrypted_buf = [0u8; 65535];
@@ -294,7 +294,7 @@ mod tests {
 
         let initiation = initiator.initiation();
         let (mut transport2, response) = responder.response(initiation).unwrap();
-        let mut transport1 = initiator.receive_response(response);
+        let mut transport1 = initiator.receive_response(response).unwrap();
 
         let data = vec![1, 2, 3, 4];
         let mut encrypted_buf = [0u8; 65535];

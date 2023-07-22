@@ -191,7 +191,7 @@ impl PendingSessionInitiator {
     pub async fn session(self) -> Option<Session> {
         if let Some((remote_addr, response)) = self.working_remote_addr {
             self.handle.abort();
-            let transport = self.initiator.receive_response(response);
+            let transport = self.initiator.receive_response(response).unwrap();
             return Some(Session::new(
                 self.id,
                 remote_addr,
@@ -364,7 +364,6 @@ impl Session {
                     guard
                         .clone()
                         .values()
-                        .into_iter()
                         .for_each(|w: &Waker| w.wake_by_ref());
                     break;
                 }
