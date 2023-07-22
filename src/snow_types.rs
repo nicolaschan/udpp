@@ -105,10 +105,25 @@ impl Default for SnowKeypair {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SnowInitiation(Vec<u8>);
 
+#[derive(Debug)]
 pub struct SnowInitiator(HandshakeState, SnowInitiation);
+
+pub enum ReceiveResponseResult {
+    Ok(LossyTransportState),
+    Err(SnowInitiator),
+}
+
+impl ReceiveResponseResult {
+    pub fn unwrap(self) -> LossyTransportState {
+        match self {
+            ReceiveResponseResult::Ok(state) => state,
+            ReceiveResponseResult::Err(_) => panic!("unwrap called on Err"),
+        }
+    }
+}
 
 impl SnowInitiator {
     pub fn new(keypair: &SnowKeypair, remote_public_key: &SnowPublicKey) -> SnowInitiator {
@@ -125,10 +140,14 @@ impl SnowInitiator {
     pub fn initiation(&self) -> SnowInitiation {
         self.1.clone()
     }
-    pub fn receive_response(mut self, response: SnowResponse) -> Result<LossyTransportState, snow::Error> {
+    pub fn receive_response(mut self, response: SnowResponse) -> ReceiveResponseResult {
         let mut buf = [0u8; 65535];
-        self.0.read_message(&response.0, &mut buf)?;
-        Ok(LossyTransportState::from_stateless(self.0.into_stateless_transport_mode().unwrap()))
+        let result = self.0.read_message(&response.0, &mut buf);
+        if result.is_err() {
+            log::error!("Decryption error while trying to establish session: {}", result.err().unwrap().to_string()); 
+            return ReceiveResponseResult::Err(self);
+        }
+        ReceiveResponseResult::Ok(LossyTransportState::from_stateless(self.0.into_stateless_transport_mode().unwrap()))
     }
 }
 

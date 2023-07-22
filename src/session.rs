@@ -18,7 +18,7 @@ use tokio::{sync::mpsc::UnboundedSender, task::JoinHandle, time};
 use uuid::Uuid;
 
 use crate::{
-    snow_types::{LossyTransportState, SnowInitiation, SnowInitiator, SnowResponder, SnowResponse},
+    snow_types::{LossyTransportState, SnowInitiation, SnowInitiator, SnowResponder, SnowResponse, ReceiveResponseResult},
     veq::{ConnectionInfo, VeqError},
 };
 
@@ -138,6 +138,11 @@ pub struct PendingSessionInitiator {
     initiator: SnowInitiator,
 }
 
+pub enum SessionResult<E> {
+    Ok(Session),
+    Err(E)
+}
+
 impl PendingSessionInitiator {
     pub async fn new(
         sender: UnboundedSender<(SocketAddr, SessionPacket, u32)>,
@@ -188,18 +193,31 @@ impl PendingSessionInitiator {
         self.working_remote_addr.is_some()
     }
 
-    pub async fn session(self) -> Option<Session> {
+    pub async fn session(self) -> SessionResult<PendingSessionInitiator> {
         if let Some((remote_addr, response)) = self.working_remote_addr {
             self.handle.abort();
-            let transport = self.initiator.receive_response(response).unwrap();
-            return Some(Session::new(
-                self.id,
-                remote_addr,
-                self.sender.clone(),
-                transport,
-            ));
+            match self.initiator.receive_response(response) {
+                ReceiveResponseResult::Ok(transport) => {
+                    return SessionResult::Ok(Session::new(
+                        self.id,
+                        remote_addr,
+                        self.sender.clone(),
+                        transport,
+                    ))
+                }
+                ReceiveResponseResult::Err(initiator) => {
+                    return SessionResult::Err(PendingSessionInitiator {
+                        handle: self.handle,
+                        working_remote_addr: None,
+                        waker: self.waker,
+                        id: self.id,
+                        sender: self.sender,
+                        initiator,
+                    })
+                }
+            }
         }
-        None
+        SessionResult::Err(self)
     }
 
     pub fn abort(&mut self) {

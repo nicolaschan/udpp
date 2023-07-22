@@ -18,7 +18,7 @@ use uuid::Uuid;
 use crate::{
     session::{
         PendingSessionInitiator, PendingSessionPoker, PendingSessionResponder, Receiving, Session,
-        SessionId, SessionPacket,
+        SessionId, SessionPacket, SessionResult,
     },
     snow_types::{SnowInitiator, SnowKeypair, SnowResponder},
     veq::{ConnectionInfo, VeqError},
@@ -101,9 +101,14 @@ impl Handler {
         } {
             pending_session.handle_incoming(src, &packet).await;
             if pending_session.is_ready() {
-                if let Some(session) = pending_session.session().await {
-                    self.upgrade_session(id, one_time_id, session, sender, wakers)
-                        .await;
+                match pending_session.session().await {
+                    SessionResult::Ok(session) => {
+                        self.upgrade_session(id, one_time_id, session, sender, wakers).await;
+                    }
+                    SessionResult::Err(pending_session) => {
+                        let mut guard = self.pending_sessions_initiator.lock().await;
+                        guard.insert(id, (pending_session, one_time_id, sender, wakers));
+                    }
                 }
             } else {
                 let mut guard = self.pending_sessions_initiator.lock().await;
