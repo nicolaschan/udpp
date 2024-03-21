@@ -3,12 +3,11 @@ use std::{
     net::{Ipv4Addr, SocketAddr, ToSocketAddrs},
 };
 
-use pnet::datalink;
 use stunclient::StunClient;
 use tokio::net::UdpSocket;
 
 pub fn local_ips(port: u16) -> HashSet<SocketAddr> {
-    let ifs = datalink::interfaces();
+    let ifs = pnet_datalink::interfaces();
     ifs.into_iter()
         .flat_map(|f| f.ips)
         .map(|ip| SocketAddr::new(ip.ip(), port))

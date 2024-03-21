@@ -1,5 +1,6 @@
 use std::io::{BufRead, Read, Write};
 
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use clap::Parser;
 
 use serde::{Deserialize, Serialize};
@@ -32,7 +33,7 @@ async fn main() {
     let conn_data_serialized = bincode::serialize(&connection_data).unwrap();
     let mut conn_data_compressed = Vec::new();
     zstd::stream::copy_encode(&conn_data_serialized[..], &mut conn_data_compressed, 10).unwrap();
-    let conn_data_emoji = base64::encode(&conn_data_compressed);
+    let conn_data_emoji = STANDARD.encode(&conn_data_compressed);
 
     eprintln!("Your data: {:?}", connection_data);
     eprintln!("Your connection string:\n{}", conn_data_emoji);
@@ -43,7 +44,7 @@ async fn main() {
     let mut peer_data_emoji = String::new();
     stdin.lock().read_line(&mut peer_data_emoji).unwrap();
     let peer_data_emoji = peer_data_emoji.replace(['\n', ' '], "");
-    let peer_data_compressed = base64::decode(peer_data_emoji).unwrap();
+    let peer_data_compressed = STANDARD.decode(peer_data_emoji).unwrap();
     let mut peer_data_serialized = Vec::new();
     zstd::stream::copy_decode(&peer_data_compressed[..], &mut peer_data_serialized).unwrap();
     let peer_data = bincode::deserialize::<ConnectionData>(&peer_data_serialized[..]).unwrap();
