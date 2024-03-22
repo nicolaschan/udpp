@@ -1,9 +1,4 @@
-use std::{
-    collections::HashSet,
-    io::Error,
-    net::SocketAddr,
-    sync::Arc,
-};
+use std::{collections::HashSet, io::Error, net::SocketAddr, sync::Arc};
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};

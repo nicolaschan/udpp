@@ -6,12 +6,16 @@ use std::{
 use stunclient::StunClient;
 use tokio::net::UdpSocket;
 
-pub fn local_ips(port: u16) -> HashSet<SocketAddr> {
-    let ifs = pnet_datalink::interfaces();
-    ifs.into_iter()
-        .flat_map(|f| f.ips)
+use network_interface::NetworkInterface;
+use network_interface::NetworkInterfaceConfig;
+
+pub fn local_ips(port: u16) -> Result<HashSet<SocketAddr>, network_interface::Error> {
+    let ifs = NetworkInterface::show()?;
+    Ok(ifs
+        .into_iter()
+        .flat_map(|f| f.addr)
         .map(|ip| SocketAddr::new(ip.ip(), port))
-        .collect()
+        .collect())
 }
 
 pub async fn public_v4(socket: &UdpSocket) -> HashSet<SocketAddr> {
@@ -52,11 +56,14 @@ pub async fn public_v6(socket: &UdpSocket) -> HashSet<SocketAddr> {
 
 pub async fn discover_ips(socket: &UdpSocket) -> HashSet<SocketAddr> {
     let mut ips = HashSet::new();
-    let local_addr = socket.local_addr().unwrap();
-    let port = local_addr.port();
 
-    ips.insert(local_addr);
-    ips.extend(&local_ips(port));
+    if let Ok(local_addr) = socket.local_addr() {
+        ips.insert(local_addr);
+
+        let port = local_addr.port();
+        ips.extend(&local_ips(port).unwrap_or_default());
+    }
+
     ips.extend(&public_v4(socket).await);
     ips.extend(&public_v6(socket).await);
 
