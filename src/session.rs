@@ -18,7 +18,10 @@ use tokio::{sync::mpsc::UnboundedSender, task::JoinHandle, time};
 use uuid::Uuid;
 
 use crate::{
-    snow_types::{LossyTransportState, SnowInitiation, SnowInitiator, SnowResponder, SnowResponse, ReceiveResponseResult},
+    snow_types::{
+        LossyTransportState, ReceiveResponseResult, SnowInitiation, SnowInitiator, SnowResponder,
+        SnowResponse,
+    },
     veq::{ConnectionInfo, VeqError},
 };
 
@@ -74,9 +77,13 @@ impl PendingSessionPoker {
                 interval.tick().await;
                 let serialized_message = bincode::serialize(&RawMessage::HandshakePoke).unwrap();
                 addresses.clone().into_iter().for_each(|addr| {
-                    sender_clone
-                        .send((addr, SessionPacket::new(id, serialized_message.clone()), 64))
-                        .unwrap();
+                    if let Err(e) = sender_clone.send((
+                        addr,
+                        SessionPacket::new(id, serialized_message.clone()),
+                        64,
+                    )) {
+                        log::warn!("Could not send handshake poke: {}", e);
+                    };
                 });
             }
         });
@@ -140,7 +147,7 @@ pub struct PendingSessionInitiator {
 
 pub enum SessionResult<E> {
     Ok(Session),
-    Err(E)
+    Err(E),
 }
 
 impl PendingSessionInitiator {
@@ -161,9 +168,13 @@ impl PendingSessionInitiator {
                     bincode::serialize(&RawMessage::HandshakeInitiation(initiation.clone()))
                         .unwrap();
                 addresses.clone().into_iter().for_each(|addr| {
-                    sender_clone
-                        .send((addr, SessionPacket::new(id, serialized_message.clone()), 64))
-                        .unwrap();
+                    if let Err(e) = sender_clone.send((
+                        addr,
+                        SessionPacket::new(id, serialized_message.clone()),
+                        64,
+                    )) {
+                        log::warn!("Could not send handshake initiation: {}", e);
+                    };
                 });
             }
         });
@@ -250,13 +261,13 @@ impl PendingSessionResponder {
                 interval.tick().await;
                 let serialized_message =
                     bincode::serialize(&RawMessage::HandshakeResponse(response.clone())).unwrap();
-                sender_clone
-                    .send((
-                        remote_addr,
-                        SessionPacket::new(id, serialized_message.clone()),
-                        64,
-                    ))
-                    .unwrap();
+                if let Err(e) = sender_clone.send((
+                    remote_addr,
+                    SessionPacket::new(id, serialized_message.clone()),
+                    64,
+                )) {
+                    log::warn!("Could not send handshake response: {}", e);
+                };
             }
         });
         PendingSessionResponder {
@@ -379,10 +390,7 @@ impl Session {
                     // This session has died, so clean up all remaining wakers
                     dead_clone.store(true, Ordering::Release);
                     let guard = wakers_clone.lock().unwrap();
-                    guard
-                        .clone()
-                        .values()
-                        .for_each(|w: &Waker| w.wake_by_ref());
+                    guard.clone().values().for_each(|w: &Waker| w.wake_by_ref());
                     break;
                 }
                 heartbeat_clone.store(false, Ordering::Release);
