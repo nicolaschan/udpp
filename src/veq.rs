@@ -1,9 +1,4 @@
-use std::{
-    collections::HashSet,
-    io::Error,
-    net::SocketAddr,
-    sync::Arc,
-};
+use std::{collections::HashSet, io::Error, net::SocketAddr, sync::Arc};
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -52,8 +47,15 @@ impl VeqSocket {
         tokio::spawn(async move {
             loop {
                 let mut buf: [u8; 65536] = [0u8; 65536];
-                let (len, src) = receiver.recv_from(&mut buf).await.unwrap();
-                handler_recv.handle_incoming(src, buf[..len].to_vec()).await;
+
+                match receiver.recv_from(&mut buf).await {
+                    Ok((len, src)) => {
+                        handler_recv.handle_incoming(src, buf[..len].to_vec()).await;
+                    }
+                    Err(e) => {
+                        log::warn!("Could not receive packet from UDP socket: {}", e);
+                    }
+                };
             }
         });
 
