@@ -73,16 +73,17 @@ impl PendingSessionPoker {
         let sender_clone = sender.clone();
         let handle = tokio::spawn(async move {
             let mut interval = time::interval(Duration::from_millis(1000));
+            let serialized_message = bincode::serialize(&RawMessage::HandshakePoke)
+                .expect("Failed to serialize handshake poke");
             loop {
                 interval.tick().await;
-                let serialized_message = bincode::serialize(&RawMessage::HandshakePoke).unwrap();
                 addresses.clone().into_iter().for_each(|addr| {
                     if let Err(e) = sender_clone.send((
                         addr,
                         SessionPacket::new(id, serialized_message.clone()),
                         64,
                     )) {
-                        log::warn!("Could not send handshake poke: {}", e);
+                        log::warn!("Could not send handshake poke to {addr}: {}", e);
                     };
                 });
             }
@@ -113,22 +114,21 @@ impl PendingSessionPoker {
         self.working_remote_addr.is_some()
     }
 
-    pub async fn responder(self) -> Option<PendingSessionResponder> {
+    pub async fn responder(self) -> anyhow::Result<PendingSessionResponder> {
         if let Some((addr, initiation)) = self.working_remote_addr {
             self.handle.abort();
-            let (transport, response) = self.responder.response(initiation).ok()?;
-            return Some(
-                PendingSessionResponder::new(
-                    self.sender.clone(),
-                    self.id,
-                    addr,
-                    transport,
-                    response,
-                )
-                .await,
-            );
+            let (transport, response) = self.responder.response(initiation)?;
+            Ok(PendingSessionResponder::new(
+                self.sender.clone(),
+                self.id,
+                addr,
+                transport,
+                response,
+            )
+            .await)
+        } else {
+            Err(anyhow::anyhow!("working_remote_addr is None."))
         }
-        None
     }
 
     pub fn abort(&mut self) {
@@ -162,18 +162,18 @@ impl PendingSessionInitiator {
         let initiation = initiator.initiation();
         let handle = tokio::spawn(async move {
             let mut interval = time::interval(Duration::from_millis(1000));
+            let serialized_message =
+                bincode::serialize(&RawMessage::HandshakeInitiation(initiation))
+                    .expect("Failed to serialize handshake initiation");
             loop {
                 interval.tick().await;
-                let serialized_message =
-                    bincode::serialize(&RawMessage::HandshakeInitiation(initiation.clone()))
-                        .unwrap();
                 addresses.clone().into_iter().for_each(|addr| {
                     if let Err(e) = sender_clone.send((
                         addr,
                         SessionPacket::new(id, serialized_message.clone()),
                         64,
                     )) {
-                        log::warn!("Could not send handshake initiation: {}", e);
+                        log::warn!("Could not send handshake initiation to {addr}: {}", e);
                     };
                 });
             }
@@ -204,31 +204,30 @@ impl PendingSessionInitiator {
         self.working_remote_addr.is_some()
     }
 
-    pub async fn session(self) -> SessionResult<PendingSessionInitiator> {
+    pub async fn session(self) -> anyhow::Result<SessionResult<PendingSessionInitiator>> {
         if let Some((remote_addr, response)) = self.working_remote_addr {
             self.handle.abort();
-            match self.initiator.receive_response(response) {
-                ReceiveResponseResult::Ok(transport) => {
-                    return SessionResult::Ok(Session::new(
-                        self.id,
-                        remote_addr,
-                        self.sender.clone(),
-                        transport,
-                    ))
-                }
+            match self.initiator.receive_response(response)? {
+                ReceiveResponseResult::Ok(transport) => Ok(SessionResult::Ok(Session::new(
+                    self.id,
+                    remote_addr,
+                    self.sender.clone(),
+                    transport,
+                )?)),
                 ReceiveResponseResult::Err(initiator) => {
-                    return SessionResult::Err(PendingSessionInitiator {
+                    Ok(SessionResult::Err(PendingSessionInitiator {
                         handle: self.handle,
                         working_remote_addr: None,
                         waker: self.waker,
                         id: self.id,
                         sender: self.sender,
                         initiator,
-                    })
+                    }))
                 }
             }
+        } else {
+            Ok(SessionResult::Err(self))
         }
-        SessionResult::Err(self)
     }
 
     pub fn abort(&mut self) {
@@ -257,16 +256,17 @@ impl PendingSessionResponder {
         let sender_clone = sender.clone();
         let handle = tokio::spawn(async move {
             let mut interval = time::interval(Duration::from_millis(1000));
+            let serialized_message =
+                bincode::serialize(&RawMessage::HandshakeResponse(response.clone()))
+                    .expect("Failed to serialize handshake response");
             loop {
                 interval.tick().await;
-                let serialized_message =
-                    bincode::serialize(&RawMessage::HandshakeResponse(response.clone())).unwrap();
                 if let Err(e) = sender_clone.send((
                     remote_addr,
                     SessionPacket::new(id, serialized_message.clone()),
                     64,
                 )) {
-                    log::warn!("Could not send handshake response: {}", e);
+                    log::warn!("Could not send handshake response to {remote_addr}: {}", e);
                 };
             }
         });
@@ -281,42 +281,66 @@ impl PendingSessionResponder {
         }
     }
 
-    pub async fn handle_incoming(&mut self, _src: SocketAddr, packet: &SessionPacket) {
-        if let Ok(RawMessage::Encrypted(encrypted)) =
-            bincode::deserialize::<RawMessage>(&packet.data)
+    pub async fn handle_incoming(
+        &mut self,
+        _src: SocketAddr,
+        packet: &SessionPacket,
+    ) -> anyhow::Result<()> {
+        if let RawMessage::Encrypted(encrypted) = bincode::deserialize::<RawMessage>(&packet.data)?
         {
             let mut decrypted = [0u8; 65535];
-            if let Ok(len) = self
+            let len = self
                 .transport
                 .read_message(&encrypted, &mut decrypted)
-                .await
-            {
-                if let Ok(Message::Keepalive) = bincode::deserialize(&decrypted[..len]) {
-                    self.ready = true;
-                    let mut guard = self.waker.lock().unwrap();
-                    if let Some(waker) = guard.take() {
-                        waker.wake_by_ref();
-                    }
-                }
+                .await?;
+            if let Message::Keepalive = bincode::deserialize(&decrypted[..len])? {
+                self.ready = true;
+                let mut guard = self.waker.lock().unwrap();
+                let waker = guard.take().ok_or(anyhow::anyhow!("No waker in guard"))?;
+                waker.wake_by_ref();
+                Ok(())
+            } else {
+                Err(anyhow::anyhow!(
+                    "Deserialized decrypted message not of type Keepalive."
+                ))
             }
+        } else {
+            Err(anyhow::anyhow!(
+                "Deserialized message not of type Encrypted."
+            ))
         }
+        // if let Ok(len) = self
+        //     .transport
+        //     .read_message(&encrypted, &mut decrypted)
+        //     .await
+        // {
+        //     if let Ok(Message::Keepalive) = bincode::deserialize(&decrypted[..len]) {
+        //         self.ready = true;
+        //         let mut guard = self.waker.lock().unwrap();
+        //         if let Some(waker) = guard.take() {
+        //             waker.wake_by_ref();
+        //         }
+        //     }
+        // }
+        // }
     }
 
     pub fn is_ready(&self) -> bool {
         self.ready
     }
 
-    pub async fn session(self) -> Option<Session> {
+    pub async fn session(self) -> anyhow::Result<Session> {
         if self.ready {
             self.handle.abort();
-            return Some(Session::new(
+            return Ok(Session::new(
                 self.id,
                 self.remote_addr,
                 self.sender.clone(),
                 self.transport,
-            ));
+            )?);
+        } else {
+            Err(anyhow::anyhow!("Am not ready"))
         }
-        None
     }
 
     pub fn abort(&mut self) {
@@ -342,7 +366,7 @@ impl Session {
         remote_addr: SocketAddr,
         sender: UnboundedSender<(SocketAddr, SessionPacket, u32)>,
         transport: LossyTransportState,
-    ) -> Session {
+    ) -> Result<Session, bincode::Error> {
         let (messages_sender, messages_receiver) = unbounded();
         let wakers = Arc::new(Mutex::new(BTreeMap::new()));
         let transport = Arc::new(tokio::sync::Mutex::new(transport));
@@ -353,7 +377,7 @@ impl Session {
 
         let sender_clone = sender.clone();
         let transport_clone = transport.clone();
-        let keepalive_serialized = bincode::serialize(&Message::Keepalive).unwrap();
+        let keepalive_serialized = bincode::serialize(&Message::Keepalive)?;
         tokio::spawn(async move {
             let mut interval = time::interval(Duration::from_millis(1000));
             loop {
@@ -362,17 +386,27 @@ impl Session {
                 let mut guard = transport_clone.lock().await;
                 let len = guard
                     .write_message(&keepalive_serialized, &mut encrypted)
-                    .await
-                    .unwrap();
+                    .await;
+                if let Err(e) = len {
+                    log::debug!("Failed to write keepalive_serialized message: {e}");
+                    continue;
+                }
+                let len = len.unwrap();
                 let serialized_message =
-                    bincode::serialize(&RawMessage::Encrypted(encrypted[..len].to_vec())).unwrap();
-                sender_clone
-                    .send((
-                        remote_addr,
-                        SessionPacket::new(id, serialized_message.clone()),
-                        64,
-                    ))
-                    .unwrap();
+                    bincode::serialize(&RawMessage::Encrypted(encrypted[..len].to_vec()));
+                if let Err(e) = serialized_message {
+                    log::debug!("Failed to serialize encrypted keepalive_serialized message: {e}");
+                    continue;
+                }
+                let serialized_message = serialized_message.unwrap();
+                if let Err(e) =
+                    sender_clone.send((remote_addr, SessionPacket::new(id, serialized_message), 64))
+                {
+                    log::debug!(
+                        "Failed to send serialized encrypted keepalive_serialized message: {e}"
+                    );
+                    continue;
+                }
                 if dead_clone.load(Ordering::Acquire) {
                     break;
                 }
@@ -396,7 +430,7 @@ impl Session {
                 heartbeat_clone.store(false, Ordering::Release);
             }
         });
-        Session {
+        Ok(Session {
             id,
             remote_addr,
             sender,
@@ -406,52 +440,49 @@ impl Session {
             heartbeat,
             dead,
             transport,
-        }
+        })
     }
-    pub async fn handle_incoming(&mut self, packet: SessionPacket) {
-        match bincode::deserialize::<RawMessage>(&packet.data).unwrap() {
+    pub async fn handle_incoming(&mut self, packet: SessionPacket) -> anyhow::Result<()> {
+        match bincode::deserialize::<RawMessage>(&packet.data)? {
             RawMessage::HandshakePoke => {}
             RawMessage::HandshakeInitiation(_) => {}
             RawMessage::HandshakeResponse(_) => {}
             RawMessage::Encrypted(encrypted) => {
                 let mut data = [0u8; 65535];
                 let mut guard = self.transport.lock().await;
-                if let Ok(len) = guard.read_message(&encrypted, &mut data).await {
-                    if let Ok(message) = bincode::deserialize::<Message>(&data[..len]) {
-                        match message {
-                            Message::Keepalive => {
-                                self.heartbeat.store(true, Ordering::Release);
-                            }
-                            Message::Payload(data) => {
-                                self.messages_sender.send(data).unwrap();
-                                let mut wakers_guard = self.wakers.lock().unwrap();
-                                if let Some((_uuid, w)) = wakers_guard.pop_first() {
-                                    w.wake_by_ref()
-                                }
-                            }
+                let len = guard.read_message(&encrypted, &mut data).await?;
+                let message = bincode::deserialize::<Message>(&data[..len])?;
+                match message {
+                    Message::Keepalive => {
+                        self.heartbeat.store(true, Ordering::Release);
+                    }
+                    Message::Payload(data) => {
+                        self.messages_sender.send(data)?;
+                        let mut wakers_guard = self.wakers.lock().unwrap();
+                        if let Some((_uuid, w)) = wakers_guard.pop_first() {
+                            w.wake_by_ref();
                         }
                     }
                 }
             }
-        };
-    }
-    pub async fn send(&mut self, data: Vec<u8>) -> bool {
-        if self.is_dead() {
-            return false;
         }
-        let serialized_message = bincode::serialize(&Message::Payload(data)).unwrap();
+        Ok(())
+    }
+    pub async fn send(&mut self, data: Vec<u8>) -> anyhow::Result<()> {
+        if self.is_dead() {
+            return Err(anyhow::anyhow!("Can't send because am dead"));
+        }
+        let serialized_message = bincode::serialize(&Message::Payload(data))?;
         let mut encrypted = [0u8; 65535];
         let mut guard = self.transport.lock().await;
-        if let Ok(len) = guard
+        let len = guard
             .write_message(&serialized_message, &mut encrypted)
-            .await
-        {
-            let message = RawMessage::Encrypted(encrypted[..len].to_vec());
-            let serialized = bincode::serialize(&message).unwrap();
-            let packet = SessionPacket::new(self.id, serialized);
-            self.sender.send((self.remote_addr, packet, 64)).unwrap();
-        }
-        true
+            .await?;
+        let message = RawMessage::Encrypted(encrypted[..len].to_vec());
+        let serialized = bincode::serialize(&message)?;
+        let packet = SessionPacket::new(self.id, serialized);
+        self.sender.send((self.remote_addr, packet, 64))?;
+        Ok(())
     }
     pub fn recv(&mut self) -> Option<Receiving> {
         if self.is_dead() {

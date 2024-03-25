@@ -24,7 +24,8 @@ mod tests {
         let id = Uuid::new_v4();
         let info1 = socket1.connection_info();
         let info2 = socket2.connection_info();
-        join!(socket1.connect(id, info2), socket2.connect(id, info1),)
+        let (alias1, alias2) = join!(socket1.connect(id, info2), socket2.connect(id, info1),);
+        (alias1.unwrap(), alias2.unwrap())
     }
 
     #[tokio::test]
@@ -88,9 +89,7 @@ mod tests {
     #[tokio::test]
     async fn test_large_payload() {
         let (mut conn1, mut conn2) = get_conns().await;
-        let data: Vec<u8> = (1..655350)
-            .map(|n: usize| (n % 256) as u8)
-            .collect();
+        let data: Vec<u8> = (1..655350).map(|n: usize| (n % 256) as u8).collect();
         conn1.send(data.clone()).await.unwrap();
         assert_eq!(data, conn2.recv().await.unwrap());
     }
@@ -104,10 +103,12 @@ mod tests {
         let info1 = socket1.connection_info();
         let info2 = socket2.connection_info();
 
-        let (mut session1, mut session2) = join!(
+        let (session1, session2) = join!(
             socket1.connect(id, info2.clone()),
             socket2.connect(id, info1.clone()),
         );
+        let mut session1 = session1.unwrap();
+        let mut session2 = session2.unwrap();
 
         session1.send(vec![0, 1, 2, 3]).await.unwrap();
         assert_eq!(vec![0, 1, 2, 3], session2.recv().await.unwrap());
@@ -115,8 +116,11 @@ mod tests {
         drop(session1);
         drop(session2);
 
-        let (mut session1, mut session2) =
+        let (session1, session2) =
             join!(socket1.connect(id, info2), socket2.connect(id, info1),);
+
+        let mut session1 = session1.unwrap();
+        let mut session2 = session2.unwrap();
 
         session1.send(vec![4, 5, 6, 7]).await.unwrap();
         assert_eq!(vec![4, 5, 6, 7], session2.recv().await.unwrap());
@@ -131,7 +135,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_bind_with_key() {
-        let keypair = SnowKeypair::new();
+        let keypair = SnowKeypair::new().unwrap();
         let socket1 = VeqSocket::bind_with_keypair("0.0.0.0:0", keypair.clone())
             .await
             .unwrap();

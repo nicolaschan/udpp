@@ -1,4 +1,4 @@
-use std::{collections::HashSet, io::Error, net::SocketAddr, sync::Arc};
+use std::{collections::HashSet, net::SocketAddr, sync::Arc};
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -27,17 +27,17 @@ pub struct VeqSocket {
 }
 
 impl VeqSocket {
-    pub async fn bind<A: ToSocketAddrs>(addrs: A) -> Result<VeqSocket, Error> {
-        let keypair = SnowKeypair::new();
+    pub async fn bind<A: ToSocketAddrs>(addrs: A) -> anyhow::Result<VeqSocket> {
+        let keypair = SnowKeypair::new()?;
         VeqSocket::bind_with_keypair(addrs, keypair).await
     }
     pub async fn bind_with_keypair<A: ToSocketAddrs>(
         addrs: A,
         keypair: SnowKeypair,
-    ) -> Result<VeqSocket, Error> {
+    ) -> anyhow::Result<VeqSocket> {
         let socket = Arc::new(UdpSocket::bind(addrs).await?);
         let connection_info = ConnectionInfo {
-            addresses: discover_ips(&socket).await,
+            addresses: discover_ips(&socket).await?,
             public_key: keypair.public(),
         };
         let (handler, mut outgoing_receiver) = Handler::new(keypair.clone());
@@ -50,7 +50,9 @@ impl VeqSocket {
 
                 match receiver.recv_from(&mut buf).await {
                     Ok((len, src)) => {
-                        handler_recv.handle_incoming(src, buf[..len].to_vec()).await;
+                        if let Err(e) = handler_recv.handle_incoming(src, buf[..len].to_vec()).await {
+                            log::debug!("VeqSocket Handler handle_incoming failed with {e}");
+                        }
                     }
                     Err(e) => {
                         log::warn!("Could not receive packet from UDP socket: {}", e);
@@ -62,11 +64,21 @@ impl VeqSocket {
         tokio::spawn(async move {
             loop {
                 if let Some((dest, packet, ttl)) = outgoing_receiver.recv().await {
-                    let serialized = bincode::serialize(&packet).unwrap();
-                    socket.set_ttl(ttl).unwrap();
+                    let serialized = bincode::serialize(&packet);
+                    if let &Err(ref e) = &serialized {
+                        log::debug!("Failed to serialize packet: {e}");
+                        continue;
+                    }
+                    let serialized = serialized.unwrap();
+                    if let Err(e) = socket.set_ttl(ttl) {
+                        log::debug!("Failed to set TTL on socket: {e}");
+                        continue;
+                    }
                     if let Err(_e) = socket.send_to(&serialized[..], dest).await {
                         log::error!("Failed to send packet to {}", dest);
                     }
+                } else {
+                    log::warn!("outgoing_receiver channel closed");
                 }
             }
         });
@@ -89,15 +101,15 @@ impl VeqSocket {
         self.keypair.clone()
     }
 
-    pub async fn connect(&mut self, id: SessionId, info: ConnectionInfo) -> VeqSessionAlias {
+    pub async fn connect(&mut self, id: SessionId, info: ConnectionInfo) -> anyhow::Result<VeqSessionAlias> {
         let (id, one_time_id) = {
             match self.is_initiator(&info) {
-                true => self.handler.initiate(id, info).await,
-                false => self.handler.respond(id, info).await,
+                true => self.handler.initiate(id, info).await?,
+                false => self.handler.respond(id, info).await?,
             }
         }
         .await;
-        let remote_addr = self.handler.remote_addr(id).await.unwrap();
+        let remote_addr = self.handler.remote_addr(id).await.ok_or(anyhow::anyhow!("Failed to get remote addr"))?;
 
         let delegate = Arc::new(BidirectionalSession {
             id,
@@ -105,10 +117,10 @@ impl VeqSocket {
             handler: self.handler.clone(),
         });
         let delegate = Chunker::new(delegate, 1000);
-        VeqSession {
+        Ok(VeqSession {
             delegate,
             remote_addr,
-        }
+        })
     }
 }
 
@@ -127,7 +139,7 @@ pub struct BidirectionalSession {
 #[async_trait]
 impl Bidirectional for Arc<BidirectionalSession> {
     async fn send(&mut self, data: Vec<u8>) -> Result<(), VeqError> {
-        self.handler.send(self.id, data).await?;
+        self.handler.send(self.id, data).await.map_err(|_e| VeqError::Disconnected)?;
         Ok(())
     }
 

@@ -50,7 +50,7 @@ async fn main() {
     let peer_data = bincode::deserialize::<ConnectionData>(&peer_data_serialized[..]).unwrap();
     eprintln!("Remote connection string accepted");
 
-    let mut conn = socket.connect(peer_data.id, peer_data.conn_info).await;
+    let mut conn = socket.connect(peer_data.id, peer_data.conn_info).await.unwrap();
     eprintln!("Connected to {}", conn.remote_addr().await);
 
     let mut conn_clone = conn.clone();
