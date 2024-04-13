@@ -3,6 +3,7 @@ use std::{collections::BTreeSet, hash::Hash, sync::Arc};
 use serde::{Deserialize, Serialize};
 use snow::{Builder, HandshakeState, StatelessTransportState};
 use tokio::sync::Mutex;
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 
 static NOISE_PARAMS: &str = "Noise_KK_25519_ChaChaPoly_BLAKE2s";
 pub fn builder<'a>() -> Builder<'a> {
@@ -78,6 +79,12 @@ impl LossyTransportState {
 pub struct SnowKeypair(SnowPublicKey, SnowPrivateKey);
 #[derive(Clone, Debug, Serialize, Deserialize, PartialOrd, Eq, PartialEq, Hash)]
 pub struct SnowPublicKey(Vec<u8>);
+
+impl SnowPublicKey {
+    pub fn base64(self) -> String {
+        STANDARD.encode(self.0)
+    }
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialOrd, Eq, PartialEq, Hash)]
 pub struct SnowPrivateKey(Vec<u8>);
