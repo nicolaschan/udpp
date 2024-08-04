@@ -72,7 +72,7 @@ impl VeqSocket {
                     let serialized = serialized.unwrap();
                     if let Err(e) = socket.set_ttl(ttl) {
                         log::debug!("Failed to set TTL on socket: {e}");
-                        continue;
+                        // continue;
                     }
                     if let Err(_e) = socket.send_to(&serialized[..], dest).await {
                         log::error!("Failed to send packet to {}", dest);
