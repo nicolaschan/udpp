@@ -1,13 +1,15 @@
+mod dualstack;
 mod handler;
 mod ip_discovery;
 mod session;
 pub mod snow_types;
 mod transform;
-mod transport;
 pub mod veq;
 
 #[cfg(test)]
 mod tests {
+
+    use std::net::{Ipv4Addr, Ipv6Addr, SocketAddrV4, SocketAddrV6};
 
     use tokio::join;
     use uuid::Uuid;
@@ -31,7 +33,7 @@ mod tests {
     #[tokio::test]
     async fn test_bind_port() {
         let port = 54783;
-        let socket = VeqSocket::bind(format!("0.0.0.0:{}", port)).await.unwrap();
+        let socket = VeqSocket::bind(&format!("0.0.0.0:{}", port)).await.unwrap();
         let connection_info = socket.connection_info();
         let bound_port = connection_info.addresses.into_iter().next().unwrap().port();
         assert_eq!(port, bound_port);
@@ -116,8 +118,7 @@ mod tests {
         drop(session1);
         drop(session2);
 
-        let (session1, session2) =
-            join!(socket1.connect(id, info2), socket2.connect(id, info1),);
+        let (session1, session2) = join!(socket1.connect(id, info2), socket2.connect(id, info1),);
 
         let mut session1 = session1.unwrap();
         let mut session2 = session2.unwrap();
@@ -140,6 +141,25 @@ mod tests {
             .await
             .unwrap();
         let socket2 = VeqSocket::bind_with_keypair("0.0.0.0:0", keypair)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            socket1.connection_info().public_key,
+            socket2.connection_info().public_key
+        );
+    }
+
+    #[tokio::test]
+    async fn test_dualstack_with_key() {
+        let keypair = SnowKeypair::new().unwrap();
+        let socket_addr_v4 = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0);
+        let socket_addr_v6 = SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, 0, 0, 0);
+        let socket1 =
+            VeqSocket::dualstack_with_keypair(socket_addr_v4, socket_addr_v6, keypair.clone())
+                .await
+                .unwrap();
+        let socket2 = VeqSocket::dualstack_with_keypair(socket_addr_v4, socket_addr_v6, keypair)
             .await
             .unwrap();
 

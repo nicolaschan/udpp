@@ -23,7 +23,7 @@ struct ConnectionData {
 #[tokio::main]
 async fn main() {
     let args = Args::parse();
-    let mut socket = VeqSocket::bind(format!("0.0.0.0:{}", args.port))
+    let mut socket = VeqSocket::bind(&format!("0.0.0.0:{}", args.port))
         .await
         .unwrap();
 
@@ -50,7 +50,10 @@ async fn main() {
     let peer_data = bincode::deserialize::<ConnectionData>(&peer_data_serialized[..]).unwrap();
     eprintln!("Remote connection string accepted");
 
-    let mut conn = socket.connect(peer_data.id, peer_data.conn_info).await.unwrap();
+    let mut conn = socket
+        .connect(peer_data.id, peer_data.conn_info)
+        .await
+        .unwrap();
     eprintln!("Connected to {}", conn.remote_addr().await);
 
     let mut conn_clone = conn.clone();

@@ -9,6 +9,8 @@ use tokio::net::UdpSocket;
 use network_interface::NetworkInterface;
 use network_interface::NetworkInterfaceConfig;
 
+use crate::dualstack::maybe_dual::MaybeDual;
+
 pub fn local_ips(port: u16) -> Result<HashSet<SocketAddr>, network_interface::Error> {
     let ifs = NetworkInterface::show()?;
     Ok(ifs
@@ -66,19 +68,31 @@ pub async fn public_v6(socket: &UdpSocket) -> Result<HashSet<SocketAddr>, std::i
     Ok(ips)
 }
 
-pub async fn discover_ips(socket: &UdpSocket) -> anyhow::Result<HashSet<SocketAddr>> {
+pub async fn discover_ips(
+    socket: &impl MaybeDual<SocketT = UdpSocket>,
+) -> anyhow::Result<HashSet<SocketAddr>> {
     let mut ips = HashSet::new();
 
-    let local_addr = socket.local_addr()?;
-    ips.insert(local_addr);
+    if let Some(v4_socket) = socket.v4() {
+        let local_addr = v4_socket.local_addr()?;
+        ips.insert(local_addr);
+        let port = local_addr.port();
+        ips.extend(&local_ips(port)?);
 
-    let port = local_addr.port();
-    ips.extend(&local_ips(port)?);
+        let public_addrs = public_v4(v4_socket).await;
+        ips.extend(public_addrs);
+    }
 
-    let (ipv4_addrs, ipv6_addrs) = tokio::join!(public_v4(socket), public_v6(socket));
-    ips.extend(&ipv4_addrs);
-    if let Ok(ipv6_addrs) = ipv6_addrs {
-        ips.extend(&ipv6_addrs);
+    if let Some(v6_socket) = socket.v6() {
+        let local_addr = v6_socket.local_addr()?;
+        ips.insert(local_addr);
+        let port = local_addr.port();
+        ips.extend(&local_ips(port)?);
+
+        let public_addrs = public_v6(v6_socket).await;
+        if let Ok(ipv6_addrs) = public_addrs {
+            ips.extend(&ipv6_addrs);
+        }
     }
 
     // ips.extend(&public_v4(socket).await);
@@ -92,16 +106,19 @@ pub async fn discover_ips(socket: &UdpSocket) -> anyhow::Result<HashSet<SocketAd
 
 #[cfg(test)]
 mod tests {
+    use crate::dualstack::versioned_socket::VersionedSocket;
+
     use super::discover_ips;
     use std::net::SocketAddr;
     use tokio::net::UdpSocket;
 
     #[tokio::test]
     async fn test_ifs() {
-        let socket = UdpSocket::bind("0.0.0.0:0").await.unwrap();
-        let ips = discover_ips(&socket).await.unwrap();
+        let udp_socket = UdpSocket::bind("0.0.0.0:0").await.unwrap();
+        let port = udp_socket.local_addr().unwrap().port();
 
-        let port = socket.local_addr().unwrap().port();
+        let socket = VersionedSocket::V4(udp_socket);
+        let ips = discover_ips(&socket).await.unwrap();
 
         assert!(!ips.contains(&format!("0.0.0.0:{}", port).parse::<SocketAddr>().unwrap()));
         assert!(ips.contains(&format!("127.0.0.1:{}", port).parse::<SocketAddr>().unwrap()));

@@ -1,11 +1,19 @@
-use std::{collections::HashSet, net::SocketAddr, sync::Arc};
+use std::{
+    collections::HashSet,
+    net::{SocketAddr, SocketAddrV4, SocketAddrV6},
+    sync::Arc,
+};
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use tokio::net::{ToSocketAddrs, UdpSocket};
+use tokio::net::UdpSocket;
 
 use crate::{
+    dualstack::{
+        bidir_socket::BidirSocket, dual_socket::DualSocket, maybe_dual::MaybeDual,
+        versioned_socket::VersionedSocket,
+    },
     handler::{Handler, OneTimeId},
     ip_discovery::discover_ips,
     session::SessionId,
@@ -27,21 +35,38 @@ pub struct VeqSocket {
 }
 
 impl VeqSocket {
-    pub async fn bind<A: ToSocketAddrs>(addrs: A) -> anyhow::Result<VeqSocket> {
+    pub async fn bind(addr: &str) -> anyhow::Result<VeqSocket> {
         let keypair = SnowKeypair::new()?;
-        VeqSocket::bind_with_keypair(addrs, keypair).await
+        let socket = VersionedSocket::bind(addr).await?;
+        VeqSocket::from_socket(socket, keypair).await
     }
-    pub async fn bind_with_keypair<A: ToSocketAddrs>(
-        addrs: A,
+
+    pub async fn bind_with_keypair(addr: &str, keypair: SnowKeypair) -> anyhow::Result<VeqSocket> {
+        let socket = VersionedSocket::bind(addr).await?;
+        VeqSocket::from_socket(socket, keypair).await
+    }
+
+    pub async fn dualstack_with_keypair(
+        socket_addr_v4: SocketAddrV4,
+        socket_addr_v6: SocketAddrV6,
         keypair: SnowKeypair,
     ) -> anyhow::Result<VeqSocket> {
-        let socket = Arc::new(UdpSocket::bind(addrs).await?);
+        let socket = DualSocket::dualstack(socket_addr_v4, socket_addr_v6).await?;
+        VeqSocket::from_socket(socket, keypair).await
+    }
+
+    pub async fn from_socket(
+        socket: impl BidirSocket + MaybeDual<SocketT = UdpSocket> + Send + Sync + 'static,
+        keypair: SnowKeypair,
+    ) -> anyhow::Result<VeqSocket> {
         let connection_info = ConnectionInfo {
             addresses: discover_ips(&socket).await?,
             public_key: keypair.public(),
         };
+
         let (handler, mut outgoing_receiver) = Handler::new(keypair.clone());
 
+        let socket = Arc::new(socket);
         let receiver = socket.clone();
         let mut handler_recv = handler.clone();
         tokio::spawn(async move {
@@ -50,7 +75,8 @@ impl VeqSocket {
 
                 match receiver.recv_from(&mut buf).await {
                     Ok((len, src)) => {
-                        if let Err(e) = handler_recv.handle_incoming(src, buf[..len].to_vec()).await {
+                        if let Err(e) = handler_recv.handle_incoming(src, buf[..len].to_vec()).await
+                        {
                             log::debug!("VeqSocket Handler handle_incoming failed with {e}");
                         }
                     }
@@ -101,7 +127,11 @@ impl VeqSocket {
         self.keypair.clone()
     }
 
-    pub async fn connect(&mut self, id: SessionId, info: ConnectionInfo) -> anyhow::Result<VeqSessionAlias> {
+    pub async fn connect(
+        &mut self,
+        id: SessionId,
+        info: ConnectionInfo,
+    ) -> anyhow::Result<VeqSessionAlias> {
         let (id, one_time_id) = {
             match self.is_initiator(&info) {
                 true => self.handler.initiate(id, info).await?,
@@ -109,7 +139,11 @@ impl VeqSocket {
             }
         }
         .await;
-        let remote_addr = self.handler.remote_addr(id).await.ok_or(anyhow::anyhow!("Failed to get remote addr"))?;
+        let remote_addr = self
+            .handler
+            .remote_addr(id)
+            .await
+            .ok_or(anyhow::anyhow!("Failed to get remote addr"))?;
 
         let delegate = Arc::new(BidirectionalSession {
             id,
@@ -139,7 +173,10 @@ pub struct BidirectionalSession {
 #[async_trait]
 impl Bidirectional for Arc<BidirectionalSession> {
     async fn send(&mut self, data: Vec<u8>) -> Result<(), VeqError> {
-        self.handler.send(self.id, data).await.map_err(|_e| VeqError::Disconnected)?;
+        self.handler
+            .send(self.id, data)
+            .await
+            .map_err(|_e| VeqError::Disconnected)?;
         Ok(())
     }
 
