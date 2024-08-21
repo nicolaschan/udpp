@@ -38,18 +38,22 @@ impl<V4SocketT: BidirSocket + Sync, V6SocketT: BidirSocket + Sync> BidirSocket
 {
     async fn recv_from(&self, buf: &mut [u8]) -> io::Result<(usize, SocketAddr)> {
         // TODO: Reuse buffers to reallocating
-        let mut v4_buf = Vec::with_capacity(buf.len());
-        let mut v6_buf = Vec::with_capacity(buf.len());
+        let mut v4_buf = vec![0; buf.len()];
+        let mut v6_buf = vec![0; buf.len()];
 
         // recv_from is cancel-safe, so if one of the recv_from calls completes first, the other
         // is guaranteed not to have received any data.
         tokio::select! {
             res = self.v4_socket.recv_from(&mut v4_buf[..]) => {
-                buf.copy_from_slice(&v4_buf);
+                if let Ok((size, _addr)) = res {
+                    buf.copy_from_slice(&v4_buf[..size]);
+                }
                 res
             },
             res = self.v6_socket.recv_from(&mut v6_buf[..]) => {
-                buf.copy_from_slice(&v6_buf);
+                if let Ok((size, _addr)) = res {
+                    buf.copy_from_slice(&v6_buf[..size]);
+                }
                 res
             },
         }

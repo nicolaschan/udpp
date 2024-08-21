@@ -46,6 +46,13 @@ impl VeqSocket {
         VeqSocket::from_socket(socket, keypair).await
     }
 
+    pub async fn dualstack(v4_addr: &str, v6_addr: &str) -> anyhow::Result<VeqSocket> {
+        let keypair = SnowKeypair::new()?;
+        let socket_addr_v4 = v4_addr.parse()?;
+        let socket_addr_v6 = v6_addr.parse()?;
+        VeqSocket::dualstack_with_keypair(socket_addr_v4, socket_addr_v6, keypair).await
+    }
+
     pub async fn dualstack_with_keypair(
         socket_addr_v4: SocketAddrV4,
         socket_addr_v6: SocketAddrV6,
