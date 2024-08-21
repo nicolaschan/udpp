@@ -20,7 +20,7 @@ mod tests {
     };
 
     async fn get_conns() -> (VeqSessionAlias, VeqSessionAlias) {
-        let mut socket1 = VeqSocket::bind("0.0.0.0:0").await.unwrap();
+        let mut socket1 = VeqSocket::dualstack("0.0.0.0:0", "[::]:0").await.unwrap();
         let mut socket2 = VeqSocket::bind("0.0.0.0:0").await.unwrap();
 
         let id = Uuid::new_v4();
