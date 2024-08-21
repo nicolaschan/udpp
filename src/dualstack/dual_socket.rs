@@ -46,13 +46,13 @@ impl<V4SocketT: BidirSocket + Sync, V6SocketT: BidirSocket + Sync> BidirSocket
         tokio::select! {
             res = self.v4_socket.recv_from(&mut v4_buf[..]) => {
                 if let Ok((size, _addr)) = res {
-                    buf.copy_from_slice(&v4_buf[..size]);
+                    buf.copy_from_slice(&v4_buf[..buf.len()]);
                 }
                 res
             },
             res = self.v6_socket.recv_from(&mut v6_buf[..]) => {
                 if let Ok((size, _addr)) = res {
-                    buf.copy_from_slice(&v6_buf[..size]);
+                    buf.copy_from_slice(&v6_buf[..buf.len()]);
                 }
                 res
             },
