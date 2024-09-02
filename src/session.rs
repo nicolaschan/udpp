@@ -221,7 +221,7 @@ impl PendingSessionInitiator {
                         waker: self.waker,
                         id: self.id,
                         sender: self.sender,
-                        initiator,
+                        initiator: *initiator,
                     }))
                 }
             }
@@ -332,12 +332,12 @@ impl PendingSessionResponder {
     pub async fn session(self) -> anyhow::Result<Session> {
         if self.ready {
             self.handle.abort();
-            return Ok(Session::new(
+            Ok(Session::new(
                 self.id,
                 self.remote_addr,
                 self.sender.clone(),
                 self.transport,
-            )?);
+            )?)
         } else {
             Err(anyhow::anyhow!("Am not ready"))
         }

@@ -161,12 +161,12 @@ impl Handler {
             return Ok(());
         }
         let mut established_sessions = self.established_sessions.lock().await;
-        if let Some(&mut(_, ref mut session)) = established_sessions.get_mut(&packet.id) {
+        if let Some(&mut (_, ref mut session)) = established_sessions.get_mut(&packet.id) {
             if let Err(e) = session.handle_incoming(packet).await {
                 log::debug!("Established session handle_incoming() failed with {e}");
             }
         }
-        return Ok(());
+        Ok(())
     }
 
     async fn upgrade_session(
@@ -233,7 +233,7 @@ impl Handler {
         let established_sessions = self.established_sessions.lock().await;
         established_sessions
             .get(&id)
-            .map(|&(_, ref session)| session.remote_addr)
+            .map(|(_, ref session)| session.remote_addr)
     }
 
     pub async fn initiate(
@@ -295,8 +295,8 @@ impl Handler {
         debug!("Removing session id={:?} one_time_id={:?}", id, one_time_id);
         {
             let mut established_sessions = self.established_sessions.lock().await;
-            if let &Some(ref one_time_id) = &one_time_id {
-                if let Some(&(ref current_one_time_id, _)) = established_sessions.get(&id) {
+            if let Some(ref one_time_id) = &one_time_id {
+                if let Some((ref current_one_time_id, _)) = established_sessions.get(&id) {
                     if one_time_id == current_one_time_id {
                         debug!(
                             "Removing established session id={:?} one_time_id={:?}",
@@ -315,8 +315,8 @@ impl Handler {
         }
         {
             let mut responder = self.pending_sessions_responder.lock().await;
-            if let &Some(ref one_time_id) = &one_time_id {
-                if let Some(&(_, ref current_one_time_id, _, _)) = responder.get(&id) {
+            if let Some(ref one_time_id) = &one_time_id {
+                if let Some((_, ref current_one_time_id, _, _)) = responder.get(&id) {
                     if one_time_id == current_one_time_id {
                         debug!(
                             "Removing responding session id={:?} one_time_id={:?}",
@@ -341,8 +341,8 @@ impl Handler {
         }
         {
             let mut pokers = self.pending_sessions_poker.lock().await;
-            if let &Some(ref one_time_id) = &one_time_id {
-                if let Some(&(_, ref current_one_time_id, _, _)) = pokers.get(&id) {
+            if let Some(ref one_time_id) = &one_time_id {
+                if let Some((_, ref current_one_time_id, _, _)) = pokers.get(&id) {
                     if one_time_id == current_one_time_id {
                         debug!(
                             "Removing poker session id={:?} one_time_id={:?}",
@@ -367,8 +367,8 @@ impl Handler {
         }
         {
             let mut initiating = self.pending_sessions_initiator.lock().await;
-            if let &Some(ref one_time_id) = &one_time_id {
-                if let Some(&(_, ref current_one_time_id, _, _)) = initiating.get(&id) {
+            if let Some(ref one_time_id) = &one_time_id {
+                if let Some((_, ref current_one_time_id, _, _)) = initiating.get(&id) {
                     if one_time_id == current_one_time_id {
                         debug!(
                             "Removing initiating session id={:?} one_time_id={:?}",

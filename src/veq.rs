@@ -98,7 +98,7 @@ impl VeqSocket {
             loop {
                 if let Some((dest, packet, ttl)) = outgoing_receiver.recv().await {
                     let serialized = bincode::serialize(&packet);
-                    if let &Err(ref e) = &serialized {
+                    if let Err(ref e) = &serialized {
                         log::debug!("Failed to serialize packet: {e}");
                         continue;
                     }

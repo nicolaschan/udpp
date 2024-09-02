@@ -1,9 +1,9 @@
 use std::{collections::BTreeSet, hash::Hash, sync::Arc};
 
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde::{Deserialize, Serialize};
 use snow::{Builder, HandshakeState, StatelessTransportState};
 use tokio::sync::Mutex;
-use base64::{engine::general_purpose::STANDARD, Engine as _};
 
 static NOISE_PARAMS: &str = "Noise_KK_25519_ChaChaPoly_BLAKE2s";
 pub fn builder<'a>() -> Builder<'a> {
@@ -71,7 +71,9 @@ impl LossyTransportState {
         while guard.len() > self.size {
             guard.pop_first();
         }
-        self.stateless.read_message(nonce, &payload[..], message).map_err(|e| e.into())
+        self.stateless
+            .read_message(nonce, &payload[..], message)
+            .map_err(|e| e.into())
     }
 }
 
@@ -122,7 +124,7 @@ pub struct SnowInitiator(HandshakeState, SnowInitiation);
 
 pub enum ReceiveResponseResult {
     Ok(LossyTransportState),
-    Err(SnowInitiator),
+    Err(Box<SnowInitiator>),
 }
 
 impl ReceiveResponseResult {
@@ -135,7 +137,10 @@ impl ReceiveResponseResult {
 }
 
 impl SnowInitiator {
-    pub fn new(keypair: &SnowKeypair, remote_public_key: &SnowPublicKey) -> Result<SnowInitiator, snow::Error> {
+    pub fn new(
+        keypair: &SnowKeypair,
+        remote_public_key: &SnowPublicKey,
+    ) -> Result<SnowInitiator, snow::Error> {
         let mut state = keypair
             .builder()
             .remote_public_key(&remote_public_key.0[..])
@@ -148,19 +153,19 @@ impl SnowInitiator {
     pub fn initiation(&self) -> SnowInitiation {
         self.1.clone()
     }
-    pub fn receive_response(mut self, response: SnowResponse) -> Result<ReceiveResponseResult, snow::Error> {
+    pub fn receive_response(
+        mut self,
+        response: SnowResponse,
+    ) -> Result<ReceiveResponseResult, snow::Error> {
         let mut buf = [0u8; 65535];
         let result = self.0.read_message(&response.0, &mut buf);
         if let Err(e) = result {
-            log::error!(
-                "Decryption error while trying to establish session: {}",
-                e
-            );
-            return Ok(ReceiveResponseResult::Err(self));
+            log::error!("Decryption error while trying to establish session: {}", e);
+            return Ok(ReceiveResponseResult::Err(Box::new(self)));
         }
-        Ok(ReceiveResponseResult::Ok(LossyTransportState::from_stateless(
-            self.0.into_stateless_transport_mode()?,
-        )))
+        Ok(ReceiveResponseResult::Ok(
+            LossyTransportState::from_stateless(self.0.into_stateless_transport_mode()?),
+        ))
     }
 }
 
@@ -170,7 +175,10 @@ pub struct SnowResponse(Vec<u8>);
 pub struct SnowResponder(HandshakeState);
 
 impl SnowResponder {
-    pub fn new(keypair: &SnowKeypair, remote_public_key: &SnowPublicKey) -> Result<SnowResponder, snow::Error> {
+    pub fn new(
+        keypair: &SnowKeypair,
+        remote_public_key: &SnowPublicKey,
+    ) -> Result<SnowResponder, snow::Error> {
         let state = keypair
             .builder()
             .remote_public_key(&remote_public_key.0[..])
