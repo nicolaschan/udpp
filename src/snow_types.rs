@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use snow::{Builder, HandshakeState, StatelessTransportState};
 use tokio::sync::Mutex;
 
-static NOISE_PARAMS: &str = "Noise_KK_25519_ChaChaPoly_BLAKE2b";
+static NOISE_PARAMS: &str = "Noise_KK_25519_ChaChaPoly_BLAKE2s";
 pub fn builder<'a>() -> Builder<'a> {
     snow::Builder::new(NOISE_PARAMS.parse().unwrap())
 }
