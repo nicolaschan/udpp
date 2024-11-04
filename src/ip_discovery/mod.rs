@@ -6,9 +6,9 @@ use std::{
 use stunclient::StunClient;
 use tokio::net::UdpSocket;
 
+use network_interface::Addr;
 use network_interface::NetworkInterface;
 use network_interface::NetworkInterfaceConfig;
-use network_interface::Addr;
 
 use crate::dualstack::maybe_dual::MaybeDual;
 
@@ -17,7 +17,10 @@ pub fn local_ips_v4(port: u16) -> Result<HashSet<SocketAddr>, network_interface:
     Ok(ifs
         .into_iter()
         .flat_map(|f| f.addr)
-        .filter_map(|addr| match addr { Addr::V4(addr_v4) => Some(addr_v4), _ => None } )
+        .filter_map(|addr| match addr {
+            Addr::V4(addr_v4) => Some(addr_v4),
+            _ => None,
+        })
         .map(|ip| SocketAddrV4::new(ip.ip, port).into())
         .collect())
 }
@@ -28,7 +31,10 @@ pub fn local_ips_v6(port: u16) -> Result<HashSet<SocketAddr>, network_interface:
     Ok(ifs
         .into_iter()
         .flat_map(|f| f.addr)
-        .filter_map(|addr| match addr { Addr::V6(addr_v6) => Some(addr_v6), _ => None } )
+        .filter_map(|addr| match addr {
+            Addr::V6(addr_v6) => Some(addr_v6),
+            _ => None,
+        })
         .map(|ip| SocketAddrV6::new(ip.ip, port, 0, 0).into())
         .collect())
 }
@@ -116,7 +122,7 @@ pub async fn discover_ips(
             ips.extend(&ipv6_addrs);
         }
     }
-    
+
     ips.retain(|x: &SocketAddr| !IpAddr::is_unspecified(&x.ip()));
 
     Ok(ips)
