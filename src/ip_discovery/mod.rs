@@ -1,6 +1,6 @@
 use std::{
     collections::HashSet,
-    net::{IpAddr, SocketAddr, ToSocketAddrs},
+    net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6, ToSocketAddrs},
 };
 
 use stunclient::StunClient;
@@ -8,15 +8,37 @@ use tokio::net::UdpSocket;
 
 use network_interface::NetworkInterface;
 use network_interface::NetworkInterfaceConfig;
+use network_interface::Addr;
 
 use crate::dualstack::maybe_dual::MaybeDual;
+
+pub fn local_ips_v4(port: u16) -> Result<HashSet<SocketAddr>, network_interface::Error> {
+    let ifs = NetworkInterface::show()?;
+    Ok(ifs
+        .into_iter()
+        .flat_map(|f| f.addr)
+        .filter_map(|addr| match addr { Addr::V4(addr_v4) => Some(addr_v4), _ => None } )
+        .map(|ip| SocketAddrV4::new(ip.ip, port).into())
+        .collect())
+}
+
+pub fn local_ips_v6(port: u16) -> Result<HashSet<SocketAddr>, network_interface::Error> {
+    log::debug!("Starting local ips v6");
+    let ifs = NetworkInterface::show()?;
+    Ok(ifs
+        .into_iter()
+        .flat_map(|f| f.addr)
+        .filter_map(|addr| match addr { Addr::V6(addr_v6) => Some(addr_v6), _ => None } )
+        .map(|ip| SocketAddrV6::new(ip.ip, port, 0, 0).into())
+        .collect())
+}
 
 pub fn local_ips(port: u16) -> Result<HashSet<SocketAddr>, network_interface::Error> {
     let ifs = NetworkInterface::show()?;
     Ok(ifs
         .into_iter()
         .flat_map(|f| f.addr)
-        .map(|ip| SocketAddr::new(ip.ip(), port))
+        .map(|ip| SocketAddr::new(ip.ip(), port).into())
         .collect())
 }
 
@@ -77,7 +99,7 @@ pub async fn discover_ips(
         let local_addr = v4_socket.local_addr()?;
         ips.insert(local_addr);
         let port = local_addr.port();
-        ips.extend(&local_ips(port)?);
+        ips.extend(&local_ips_v4(port)?);
 
         let public_addrs = public_v4(v4_socket).await;
         ips.extend(public_addrs);
@@ -87,18 +109,14 @@ pub async fn discover_ips(
         let local_addr = v6_socket.local_addr()?;
         ips.insert(local_addr);
         let port = local_addr.port();
-        ips.extend(&local_ips(port)?);
+        ips.extend(&local_ips_v6(port)?);
 
         let public_addrs = public_v6(v6_socket).await;
         if let Ok(ipv6_addrs) = public_addrs {
             ips.extend(&ipv6_addrs);
         }
     }
-
-    // ips.extend(&public_v4(socket).await);
-    // ips.extend(&public_v6(socket).await?);
-
-    // ips.retain(|x| x.ip() != Ipv4Addr::new(0, 0, 0, 0));
+    
     ips.retain(|x: &SocketAddr| !IpAddr::is_unspecified(&x.ip()));
 
     Ok(ips)
