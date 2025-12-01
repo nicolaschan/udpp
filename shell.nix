@@ -1,5 +1,5 @@
 with import <nixpkgs> { }; 
 
 runCommand "dummy" {
-    buildInputs = [ cargo rustup gcc automake autoconf perl pkg-config ];
+    buildInputs = [ cargo rustc gcc automake autoconf perl pkg-config ];
 } ""
