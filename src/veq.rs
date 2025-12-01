@@ -157,7 +157,7 @@ impl VeqSocket {
             one_time_id,
             handler: self.handler.clone(),
         });
-        let delegate = Chunker::new(delegate, 1000);
+        let delegate = Chunker::new(delegate, 4096);
         Ok(VeqSession {
             delegate,
             remote_addr,
