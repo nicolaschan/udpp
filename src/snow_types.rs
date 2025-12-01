@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use snow::{Builder, HandshakeState, StatelessTransportState};
 use tokio::sync::Mutex;
 
-static NOISE_PARAMS: &str = "Noise_KKhfs_25519+Kyber1024_XChaChaPoly_BLAKE2b";
+static NOISE_PARAMS: &str = "Noise_KK_25519_ChaChaPoly_BLAKE2b";
 pub fn builder<'a>() -> Builder<'a> {
     snow::Builder::new(NOISE_PARAMS.parse().unwrap())
 }
@@ -106,7 +106,7 @@ impl SnowKeypair {
         self.1.clone()
     }
     pub fn builder(&self) -> Builder<'_> {
-        builder().local_private_key(&self.1 .0)
+        builder().local_private_key(&self.1 .0).unwrap()
     }
 }
 
@@ -143,7 +143,7 @@ impl SnowInitiator {
     ) -> Result<SnowInitiator, snow::Error> {
         let mut state = keypair
             .builder()
-            .remote_public_key(&remote_public_key.0[..])
+            .remote_public_key(&remote_public_key.0[..])?
             .build_initiator()?;
         let mut buf = [0u8; 65535];
         let len = state.write_message(&[], &mut buf)?;
@@ -181,7 +181,7 @@ impl SnowResponder {
     ) -> Result<SnowResponder, snow::Error> {
         let state = keypair
             .builder()
-            .remote_public_key(&remote_public_key.0[..])
+            .remote_public_key(&remote_public_key.0[..])?
             .build_responder()?;
         Ok(SnowResponder(state))
     }
